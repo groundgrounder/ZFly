@@ -1,12 +1,16 @@
+import json
+
 from gi.repository import Adw, Gtk
 
 from .catalog_model import CATALOG_KINDS
 from .settings import button, choice
+from .ui import EmptyState, label, modal_window, primary_button, show_error
 
 
 class CatalogPanel(Gtk.Box):
     def __init__(self, window):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_start=20, margin_end=20, margin_bottom=20)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=16, vexpand=True)
+        self.add_css_class("zfly-page")
         self.window = window
         self.cache = {}
         self.profile_ids = []
@@ -16,7 +20,12 @@ class CatalogPanel(Gtk.Box):
         self.loading = False
         self.attempted = set()
         self.bridge_available = False
+        self.load_error = ""
         self.kinds = ["proxies", "groups"]
+        heading = Gtk.Box(spacing=12)
+        heading.append(label("自定义资源", "title-1", hexpand=True))
+        heading.append(primary_button(button("新建", lambda: self.open())))
+        self.append(heading)
         fields = Adw.PreferencesGroup(description="节点在自定义配置之间共享，代理组属于所选配置；规则和扩展方式在规则与高级中管理。")
         self.kind = choice(fields, "分类", [CATALOG_KINDS[k] for k in self.kinds], CATALOG_KINDS["proxies"])
         self.profile = choice(fields, "自定义配置", ["选择配置"], "选择配置")
@@ -24,11 +33,14 @@ class CatalogPanel(Gtk.Box):
         self.append(fields)
         actions = Gtk.Box(spacing=12)
         actions.append(button("刷新", self.load))
-        actions.append(button("新建", lambda: self.open()))
         self.append(actions)
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list.add_css_class("boxed-list")
-        self.append(Gtk.ScrolledWindow(child=self.list, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER))
+        self.list_scroll = Gtk.ScrolledWindow(child=self.list, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.append(self.list_scroll)
+        self.empty = EmptyState("创建自己的节点", "添加节点后，可在自定义配置中引用它们。", "folder-symbolic", ("新建节点", self._empty_action))
+        self.empty.set_vexpand(True)
+        self.append(self.empty)
         self.note = Gtk.Label(label="请连接本地运行时。", xalign=0, wrap=True)
         self.append(self.note)
         self.kind.connect("notify::selected", self.select)
@@ -36,6 +48,7 @@ class CatalogPanel(Gtk.Box):
 
     def reset(self):
         self.cache.clear()
+        self.load_error = ""
         self.attempted.clear()
         self.bridge_available = False
         self.pending = self.loading = False
@@ -88,6 +101,7 @@ class CatalogPanel(Gtk.Box):
     def select(self, *_args):
         if self.updating:
             return
+        self.load_error = ""
         self.profile.set_visible(self.key()[0] == "groups")
         self.render()
         if self.key() not in self.cache and self.key() not in self.attempted:
@@ -104,12 +118,35 @@ class CatalogPanel(Gtk.Box):
             following = child.get_next_sibling()
             self.list.remove(child)
             child = following
-        for item in self.cache.get(self.key(), []):
+        items = self.cache.get(self.key(), [])
+        for item in items:
             row = Adw.ActionRow(title=item["label"], subtitle=item["detail"])
             row.set_use_markup(False)
             row.add_suffix(button("编辑", lambda identity=item["id"]: self.open(identity)))
             self.list.append(row)
-        self.note.set_label("暂无资源，点击新建添加。" if self.available() and not self.cache.get(self.key()) else "请连接本地运行时，并为代理组选择自定义配置。" if not self.available() else "")
+        self.list_scroll.set_visible(bool(items))
+        self.empty.set_visible(not items)
+        self.empty.action.set_visible(self.available())
+        if self.load_error:
+            self.empty.update("无法载入资源", self.load_error)
+            self.empty.action.set_label("重试")
+        elif not self.available():
+            self.empty.update("先准备一份自定义配置" if self.key()[0] == "groups" else "正在准备资源", "请在配置与订阅中创建自定义配置。" if self.key()[0] == "groups" else "等待 ZFly 本地运行时就绪。")
+        else:
+            groups = self.key()[0] == "groups"
+            self.empty.update("创建自己的代理组" if groups else "创建自己的节点", "将节点组织为代理组，按需选择连接方式。" if groups else "添加节点后，可在自定义配置中引用它们。")
+            self.empty.action.set_label("新建代理组" if groups else "新建节点")
+        self.note.set_label(self.load_error if self.load_error else f"{len(items)} 项资源" if items else "")
+        if self.load_error:
+            self.note.add_css_class("error")
+        else:
+            self.note.remove_css_class("error")
+
+    def _empty_action(self):
+        if self.load_error:
+            self.load()
+        else:
+            self.open()
 
     def load(self):
         if self.window.page != "自定义资源" or not self.available() or self.loading:
@@ -118,13 +155,18 @@ class CatalogPanel(Gtk.Box):
             self.pending = True
             return
         target = self.key()
+        self.load_error = ""
         self.loading = True
         self.attempted.add(target)
         def receive(result):
             self.cache[target] = result["items"]
             if self.key() == target:
                 self.render()
-        self.window.manage(self.command("catalog.list"), receive, done=lambda: setattr(self, "loading", False))
+        def failed(message):
+            if self.key() == target:
+                self.load_error = message
+                self.render()
+        self.window.manage(self.command("catalog.list"), receive, done=lambda: setattr(self, "loading", False), on_error=failed)
 
     def open(self, identity=None):
         if not self.available():
@@ -134,24 +176,44 @@ class CatalogPanel(Gtk.Box):
         self.window.manage(command, lambda result: self.editor(command, result["document"]))
 
     def editor(self, command, document):
-        dialog = Adw.Window(title=document["title"], transient_for=self.window, modal=True, default_width=700, default_height=580)
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_start=20, margin_end=20, margin_top=20, margin_bottom=20)
-        content.append(Gtk.Label(label="使用 JSON 编辑原版资源。节点和代理组保存前交给核心校验。", wrap=True, xalign=0))
-        editor = Gtk.TextView(monospace=True, vexpand=True)
+        dialog, content, _header = modal_window(self.window, document["title"], 700, 580)
+        content.append(label("使用 JSON 编辑完整节点或代理组。保存前由核心校验。", "dim-label"))
+        editor = Gtk.TextView(monospace=True, vexpand=True, top_margin=12, bottom_margin=12, left_margin=12, right_margin=12)
+        editor.add_css_class("card")
         buffer = editor.get_buffer()
         buffer.set_text(document["text"])
         buffer.set_modified(False)
-        content.append(Gtk.ScrolledWindow(child=editor, vexpand=True))
-        actions = Gtk.Box(spacing=12)
+        content.append(Gtk.ScrolledWindow(child=editor, vexpand=True, min_content_height=240))
+        content.append(dialog.error_label)
+        actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=3, column_spacing=8, row_spacing=8)
         def send(action):
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+            show_error(dialog, "")
+            if action == "catalog.save":
+                try:
+                    value = json.loads(text)
+                    if not isinstance(value, dict):
+                        show_error(dialog, "资源需要一个 JSON 对象。")
+                        return
+                except json.JSONDecodeError as error:
+                    show_error(dialog, f"JSON 第 {error.lineno} 行、第 {error.colno} 列：{error.msg}")
+                    return
             request = {**command, "action": action, "text": text, "revision": document["revision"]}
             def saved(_result):
                 self.cache.clear()
+                self.attempted.clear()
+                self.load_error = ""
                 buffer.set_modified(False)
                 dialog.close()
                 self.load()
-            self.window.manage(request, saved, pending=dialog)
+            self.window.manage(request, saved, pending=dialog, on_error=lambda message: show_error(dialog, message))
+        def format_json():
+            try:
+                text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+                buffer.set_text(json.dumps(json.loads(text), ensure_ascii=False, indent=2))
+                show_error(dialog, "")
+            except json.JSONDecodeError as error:
+                show_error(dialog, f"JSON 第 {error.lineno} 行、第 {error.colno} 列：{error.msg}")
         def confirm(heading, callback):
             alert = Adw.MessageDialog(transient_for=dialog, modal=True, heading=heading)
             alert.add_response("cancel", "取消")
@@ -161,9 +223,11 @@ class CatalogPanel(Gtk.Box):
             alert.connect("response", lambda _alert, response: callback() if response == "continue" else None)
             alert.present()
         if command.get("id") is not None:
-            actions.append(button("删除", lambda: confirm("删除此资源？节点或代理组的引用可能失效。", lambda: send("catalog.delete"))))
-        actions.append(button("关闭", dialog.close))
-        actions.append(button("保存并应用", lambda: send("catalog.save")))
+            delete = button("删除", lambda: confirm("删除此资源？节点或代理组的引用可能失效。", lambda: send("catalog.delete")))
+            delete.add_css_class("destructive-action")
+            actions.insert(delete, -1)
+        actions.insert(button("格式化 JSON", format_json), -1)
+        actions.insert(primary_button(button("保存并应用", lambda: send("catalog.save"))), -1)
         def close_request(_dialog):
             if not buffer.get_modified():
                 return False
@@ -174,5 +238,4 @@ class CatalogPanel(Gtk.Box):
             return True
         dialog.connect("close-request", close_request)
         content.append(actions)
-        dialog.set_content(content)
         dialog.present()

@@ -5,8 +5,9 @@ from pathlib import Path
 from gi.repository import Adw, Gio, Gtk
 
 from .controller import CONFIG_CHOICES, CONFIG_FLAGS, CONFIG_PORTS, CONFIG_TEXT, ControllerError, validate_config
-from .management import validate_network
+from .management import validate_network, validate_profile_command
 from .startup import StartupPreferences
+from .ui import EmptyState, SectionPage, modal_window, primary_button, show_error
 
 
 def button(label, callback):
@@ -17,6 +18,7 @@ def button(label, callback):
 
 def entry(group, title, text="", password=False):
     row = (Adw.PasswordEntryRow if password else Adw.EntryRow)(title=title, text=str(text))
+    row.connect("changed", lambda item: item.remove_css_class("error"))
     group.add(row)
     return row
 
@@ -28,7 +30,8 @@ def switch(group, title, active=False):
 
 
 def choice(group, title, values, current):
-    row = Adw.ComboRow(title=title, model=Gtk.StringList.new(values))
+    names = {"rule": "规则", "global": "全局", "direct": "直连", "silent": "静默", "error": "错误", "warning": "警告", "info": "信息", "debug": "调试", "off": "关闭", "always": "始终", "strict": "严格"}
+    row = Adw.ComboRow(title=title, model=Gtk.StringList.new([names.get(value, value) for value in values]))
     if current in values:
         row.set_selected(values.index(current))
     row.values = values
@@ -63,34 +66,34 @@ class SettingsPanel(Gtk.Box):
         self.updating_startup = False
         self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(180)
-        categories = Gtk.DropDown(model=Gtk.StringList.new(["运行时核心", "配置与订阅", "网络接管", "外观", "应用启动"]), margin_start=20, margin_end=20)
-        categories.connect("notify::selected", lambda row, _param: self.stack.set_visible_child_name(["core", "profiles", "network", "appearance", "startup"][row.get_selected()]))
+        categories = Gtk.DropDown(model=Gtk.StringList.new(["核心设置", "网络接管", "外观", "应用启动"]), margin_start=24, margin_end=24, margin_top=24)
+        categories.connect("notify::selected", lambda row, _param: self.stack.set_visible_child_name(["core", "network", "appearance", "startup"][row.get_selected()]))
         self.categories = categories
-        self.append(categories)
+        self.append(Adw.Clamp(child=categories, maximum_size=900, tightening_threshold=680))
         self.append(self.stack)
-        self.core = Adw.PreferencesPage(title="运行时核心")
-        self.profiles = Adw.PreferencesPage(title="配置与订阅")
-        self.network = Adw.PreferencesPage(title="网络接管")
-        self.appearance = Adw.PreferencesPage(title="外观")
-        self.startup = Adw.PreferencesPage(title="应用启动")
-        for name, page in (("core", self.core), ("profiles", self.profiles), ("network", self.network), ("appearance", self.appearance), ("startup", self.startup)):
+        self.core = SectionPage(title="核心设置")
+        self.profiles = SectionPage(title="配置与订阅")
+        self.network = SectionPage(title="网络接管")
+        self.appearance = SectionPage(title="外观")
+        self.startup = SectionPage(title="应用启动")
+        for name, page in (("core", self.core), ("network", self.network), ("appearance", self.appearance), ("startup", self.startup)):
             self.stack.add_titled(page, name, page.get_title())
         core_actions = Adw.PreferencesGroup(title="运行时核心设置", description="修改由 ZFly 持久保存；失败时恢复原设置。")
         self.core.add(core_actions)
         row = Adw.ActionRow(title="应用当前编辑")
         row.add_suffix(button("重新载入", self.reload_core))
-        row.add_suffix(button("应用", self.save_core))
+        row.add_suffix(primary_button(button("应用", self.save_core)))
         core_actions.add(row)
         self.core_group = Adw.PreferencesGroup()
         self.core.add(self.core_group)
         self.core_note = Adw.PreferencesGroup(description="请先连接核心。")
         self.core.add(self.core_note)
-        self.bridge_note = Adw.PreferencesGroup(title="ZFly 本地运行时", description="应用自动启动自己的服务与核心，无需其他应用。")
+        self.bridge_note = Adw.PreferencesGroup(description="添加订阅、导入 YAML，或创建自己的配置。")
         self.profiles.add(self.bridge_note)
         self.profile_actions = Adw.PreferencesGroup()
         self.profiles.add(self.profile_actions)
         actions = Adw.ActionRow(title="配置管理")
-        actions.add_suffix(button("添加订阅", lambda: self.profile_properties()))
+        actions.add_suffix(primary_button(button("添加订阅", lambda: self.profile_properties())))
         actions.add_suffix(button("导入 YAML", self.import_file))
         self.profile_actions.add(actions)
         custom = Adw.ActionRow(title="自定义配置")
@@ -98,6 +101,8 @@ class SettingsPanel(Gtk.Box):
         self.profile_actions.add(custom)
         self.profile_items = Adw.PreferencesGroup()
         self.profiles.add(self.profile_items)
+        self.profile_empty = EmptyState("添加第一份配置", "支持 Clash 格式订阅，也可导入本地 YAML。", "document-new-symbolic", ("添加订阅", self.profile_properties))
+        self.profiles.add(self.profile_empty)
         self.network_note = Adw.PreferencesGroup(title="持久化网络设置", description="等待本地运行时就绪。")
         self.network.add(self.network_note)
         self.running_row = Adw.ActionRow(title="核心运行请求")
@@ -108,7 +113,7 @@ class SettingsPanel(Gtk.Box):
         self.network.add(self.network_actions)
         actions = Adw.ActionRow(title="保存到 ZFly")
         actions.add_suffix(button("重新载入", self.reload_network))
-        actions.add_suffix(button("保存", self.save_network))
+        actions.add_suffix(primary_button(button("保存", self.save_network)))
         self.network_actions.add(actions)
         self.network_group = Adw.PreferencesGroup(description="系统代理支持 GNOME 桌面；TUN 需要独立核心具有系统权限。系统 DNS 接管尚未实现。")
         self.network.add(self.network_group)
@@ -155,7 +160,7 @@ class SettingsPanel(Gtk.Box):
         self.network_actions.set_sensitive(available)
         self.network_group.set_sensitive(available)
         self.run_button.set_sensitive(available)
-        self.bridge_note.set_description(self.window.management_status)
+        self.bridge_note.set_description("离线预览 · 所有操作仅修改演示数据" if self.window.preview else "添加订阅、导入 YAML，或创建自己的配置。" if available else self.window.management_status)
         if not available:
             self.profiles_key = None
             self._render_profiles([])
@@ -261,11 +266,14 @@ class SettingsPanel(Gtk.Box):
             self.window.toast(str(error))
             return
         controller = self.window.controller
+        management = self.window.management_client
         baseline = copy.deepcopy(self.core_baseline)
         def work():
             controller.configure(draft, baseline)
-            return controller.snapshot()
-        def receive(data):
+            return controller.snapshot(), management.snapshot() if management else None
+        def receive(result):
+            data, state = result
+            self.window.management_state = state
             self.window._receive(data)
             self.reload_core()
             self.window.toast("已应用运行时设置。")
@@ -320,11 +328,13 @@ class SettingsPanel(Gtk.Box):
 
     def _render_profiles(self, profiles):
         group = self._replace_group(self.profiles, "profile_items")
+        self.profile_empty.set_visible(not profiles)
         for profile in profiles:
             active = self.window.management_state["currentProfileID"] == profile["id"]
-            title = ("✓ " if active else "") + profile["label"]
+            title = profile["label"]
             row = Adw.ExpanderRow(title=title, subtitle={"url": "订阅", "file": "本地 YAML", "custom": "自定义配置"}.get(profile["type"], profile["type"]))
             row.set_use_markup(False)
+            row.add_prefix(Gtk.Image(icon_name="object-select-symbolic" if active else "document-new-symbolic"))
             row.set_expanded(profile["id"] in self.expanded_profiles)
             def expanded(item, _param, identity=profile["id"]):
                 if item.get_expanded():
@@ -338,7 +348,9 @@ class SettingsPanel(Gtk.Box):
             use.set_sensitive(not active)
             actions.add_suffix(use)
             actions.add_suffix(button("属性", lambda p=profile: self.profile_properties(p)))
-            actions.add_suffix(button("删除", lambda p=profile: self.delete_profile(p)))
+            delete = button("删除", lambda p=profile: self.delete_profile(p))
+            delete.add_css_class("flat")
+            actions.add_suffix(delete)
             row.add_row(actions)
             if profile["type"] == "url":
                 info = Adw.ActionRow(title="订阅", subtitle=f"自动更新：{'每 ' + str(profile['updateHours']) + ' 小时' if profile['autoUpdate'] else '关闭'} · {profile.get('updated') or '尚未更新'}")
@@ -362,9 +374,10 @@ class SettingsPanel(Gtk.Box):
             auto = switch(group, "自动更新", profile["autoUpdate"] if profile else True)
             hours = entry(group, "更新间隔（小时）", profile["updateHours"] if profile else 24)
         def save():
+            show_error(dialog, "")
             interval = hours.get_text() if hours else str(profile["updateHours"])
             if not interval.isdecimal() or not 1 <= int(interval) <= 8760:
-                error.set_label("自动更新间隔应为 1–8760 小时。")
+                show_error(dialog, "自动更新间隔应为 1–8760 小时。", hours)
                 return
             command = {"action": "profile.edit" if profile else "profile.add", "label": label.get_text(), "url": url.get_text().strip() if url else profile["url"], "autoUpdate": auto.get_active() if auto else profile["autoUpdate"], "updateHours": int(interval)}
             if profile:
@@ -372,8 +385,15 @@ class SettingsPanel(Gtk.Box):
                 command["revision"] = profile.get("revision")
             if key:
                 command["ageSecretKey"] = key.get_text()
-            self.window.manage(command, lambda _result: dialog.close(), pending=dialog)
-        content.append(button("保存", save))
+            try:
+                validate_profile_command(command, profile)
+            except ControllerError as failure:
+                show_error(dialog, str(failure), url if url else label)
+                return
+            self.window.manage(command, lambda _result: dialog.close(), pending=dialog, on_error=lambda message: show_error(dialog, message))
+        save_button = primary_button(button("保存", save))
+        save_button.set_halign(Gtk.Align.END)
+        content.append(save_button)
         dialog.present()
 
     def create_profile(self):
@@ -382,21 +402,20 @@ class SettingsPanel(Gtk.Box):
         def create():
             name = label.get_text().strip()
             if not name:
-                error.set_label("请填写名称。")
+                show_error(dialog, "请填写名称。", label)
                 return
-            self.window.manage({"action": "profile.create", "label": name}, lambda _result: dialog.close(), pending=dialog)
-        content.append(button("创建", create))
+            self.window.manage({"action": "profile.create", "label": name}, lambda _result: dialog.close(), pending=dialog, on_error=lambda message: show_error(dialog, message))
+        create_button = primary_button(button("创建", create))
+        create_button.set_halign(Gtk.Align.END)
+        content.append(create_button)
         dialog.present()
 
     def form_window(self, title):
-        dialog = Adw.Window(title=title, transient_for=self.window, modal=True, default_width=560, default_height=460)
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_start=20, margin_end=20, margin_top=20, margin_bottom=20)
+        dialog, content, _header = modal_window(self.window, title)
         group = Adw.PreferencesGroup()
         content.append(group)
-        error = Gtk.Label(wrap=True, xalign=0)
-        error.add_css_class("error")
+        error = dialog.error_label
         content.append(error)
-        dialog.set_content(Gtk.ScrolledWindow(child=content, hscrollbar_policy=Gtk.PolicyType.NEVER))
         return dialog, content, group, error
 
     def delete_profile(self, profile):
@@ -445,7 +464,8 @@ class SettingsPanel(Gtk.Box):
         def response(dialog, result):
             try:
                 if result == Gtk.ResponseType.ACCEPT:
-                    dialog.get_file().replace_contents(data, None, False, Gio.FileCreateFlags.REPLACE_DESTINATION, None)
+                    dialog.get_file().replace_contents(data, None, False,
+                        Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, None)
             except Exception:
                 self.window.toast("导出失败，请检查目标文件权限。")
             finally:
@@ -454,8 +474,7 @@ class SettingsPanel(Gtk.Box):
         chooser.show()
 
     def edit_file(self, profile, file, text):
-        dialog = Adw.Window(title=profile["label"], transient_for=self.window, modal=True, default_width=760, default_height=620)
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_start=20, margin_end=20, margin_top=20, margin_bottom=20)
+        dialog, content, _header = modal_window(self.window, profile["label"], 760, 620)
         content.append(Gtk.Label(label="保存前由核心校验。订阅只读；加密文件请使用外部编辑器。", wrap=True, xalign=0))
         editor = Gtk.TextView(monospace=True, editable=profile["type"] == "file")
         buffer = editor.get_buffer()
@@ -477,7 +496,8 @@ class SettingsPanel(Gtk.Box):
             confirmation.present()
             return True
         dialog.connect("close-request", close_request)
-        content.append(Gtk.ScrolledWindow(child=editor, vexpand=True))
+        content.append(Gtk.ScrolledWindow(child=editor, vexpand=True, min_content_height=240))
+        content.append(dialog.error_label)
         actions = Gtk.Box(spacing=12, halign=Gtk.Align.END)
         actions.append(button("关闭", dialog.close))
         if profile["type"] == "file":
@@ -486,8 +506,8 @@ class SettingsPanel(Gtk.Box):
                 dialog.close()
             def save():
                 data = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True).encode()
-                self.window.manage({"action": "profile.write", "id": profile["id"], "revision": file["revision"], "data": base64.b64encode(data).decode()}, saved, pending=dialog)
-            actions.append(button("校验并保存", save))
+                show_error(dialog, "")
+                self.window.manage({"action": "profile.write", "id": profile["id"], "revision": file["revision"], "data": base64.b64encode(data).decode()}, saved, pending=dialog, on_error=lambda message: show_error(dialog, message))
+            actions.append(primary_button(button("校验并保存", save)))
         content.append(actions)
-        dialog.set_content(content)
         dialog.present()

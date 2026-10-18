@@ -26,7 +26,7 @@ macOS 使用 SwiftUI，支持 Liquid Glass 与系统材质回退；Linux 使用 
 - 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者与 Geo 资源更新、网络诊断。
 - 本地备份与恢复、HTTPS WebDAV；私有数据权限、原子保存、过期写入拒绝、配置失败回滚和系统代理恢复记录。
 
-尚未达到 FlClash 全功能对等：macOS 权限助手与 TUN、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码导入和应用自更新尚未实现。Linux 的 TUN 需要额外核心权限，且本次没有完成 Linux 平台运行验证。
+尚未达到 FlClash 全功能对等：macOS 权限助手与 TUN、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码导入和应用自更新尚未实现。Linux 的 TUN 需要额外核心权限；目前已验证 x86_64 Linux 打包与安全模式界面，真实代理接管仍需平台验证。
 
 ## macOS 构建
 
@@ -61,7 +61,7 @@ nix run .#
 nix run .# -- --safe-mode
 ```
 
-`flake.nix` 为 `x86_64-linux` 和 `aarch64-linux` 配置 GTK、Python、独立 mihomo、桌面入口与图标。GNOME 系统代理通过 gsettings 管理。其他桌面可手动设置本地代理。当前环境没有 Nix、GTK 和 PyGObject，尚未验证 Linux 构建与运行。
+`flake.nix` 为 `x86_64-linux` 和 `aarch64-linux` 配置 GTK、Python、独立 mihomo、桌面入口与图标。GNOME 系统代理通过 gsettings 管理。其他桌面可手动设置本地代理。已在 x86_64 Linux 上通过 Nix 构建和隔离 Wayland 安全模式验证；aarch64、真实核心连接、系统代理接管与 TUN 尚未完成平台验证。
 
 已有 GTK 4、libadwaita 和 PyGObject 时可从源码开发运行：
 
@@ -72,6 +72,9 @@ PYTHONPATH=linux:runtime python3 -m zfly --safe-mode
 
 ## 验证
 
+GTK 概览集中显示运行状态、当前配置、节点、系统代理及核心累计流量；“配置与订阅”与“设置”独立。网络工具按诊断、维护和备份分组。高级资源仍使用 JSON 编辑，支持格式化与就地错误提示。
+
+
 ```sh
 # 无网络、无系统代理修改的回归测试
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s runtime/tests -v
@@ -80,7 +83,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s run
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 
-2026-10-18：macOS Apple Silicon 发布包构建、签名和资源校验通过；24 项离线测试在应用自带 Python 中通过；应用复制到含空格的新路径后，运行时、原生模块和 TLS 证书加载通过。当前沙箱禁止本机 socket 绑定，真实核心端到端测试返回跳过（退出码 77）；安全模式 GUI 直接启动在系统应用注册阶段退出（退出码 -6），LaunchServices 启动返回 -10827，未能完成视觉检查。实际外部代理连接、系统代理接管、TUN、旧版 macOS 和 Linux 均未在本次验证。
+2026-10-18：macOS Apple Silicon 发布包构建、签名和资源校验通过；24 项离线测试在应用自带 Python 中通过；应用复制到含空格的新路径后，运行时、原生模块和 TLS 证书加载通过。当前沙箱禁止本机 socket 绑定，真实核心端到端测试返回跳过（退出码 77）；安全模式 GUI 直接启动在系统应用注册阶段退出（退出码 -6），LaunchServices 启动返回 -10827，未能完成视觉检查。以上为 macOS 验证记录。另已完成 x86_64 Linux 的 Nix 打包、GTK 安全模式明暗主题与窄窗检查；真实外部代理连接、系统代理接管、TUN、旧版 macOS 和 aarch64 Linux 尚未验证。
 
 ## 源码与许可
 

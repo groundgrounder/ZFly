@@ -1,11 +1,46 @@
 import base64
+import copy
 import unittest
 
 from zfly.management import PreviewManagement, validate_network, validate_profile_command
-from zfly.controller import ControllerError
+from zfly.controller import ControllerError, PreviewController
 
 
 class ManagementValidationTests(unittest.TestCase):
+    def test_linked_preview_keeps_core_edits_in_other_management_responses(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        baseline = core.configuration()
+        core.configure({**baseline, "mode": "global", "ipv6": True}, baseline)
+        for command in ({"action": "catalog.list", "section": "proxies"},
+                        {"action": "workspace.read", "section": "dns"}):
+            with self.subTest(command=command):
+                state = manager.perform(command)["state"]
+                self.assertEqual(state["network"]["mode"], "global")
+                self.assertTrue(state["network"]["ipv6"])
+
+    def test_linked_preview_rejects_stale_network_writes_after_core_edits(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        before = manager.snapshot()["network"]
+        baseline = core.configuration()
+        core.configure({**baseline, "mode": "global"}, baseline)
+        with self.assertRaisesRegex(ControllerError, "已修改"):
+            manager.perform({"action": "network.save", "network": before, "expected": before})
+        self.assertEqual(core.configuration()["mode"], "global")
+
+    def test_linked_preview_rejects_port_conflicts_without_partial_state_changes(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        baseline = core.configuration()
+        core.configure({**baseline, "port": 8000}, baseline)
+        before = manager.snapshot()
+        network = {**copy.deepcopy(before["network"]), "mixedPort": 8000, "ipv6": True}
+        with self.assertRaisesRegex(ControllerError, "不能重复"):
+            manager.perform({"action": "network.save", "network": network, "expected": before["network"]})
+        self.assertEqual(manager.snapshot(), before)
+        self.assertEqual(core.configuration()["mixed-port"], 7890)
+
     def test_network_validation_rejects_non_objects_and_unsafe_devices(self):
         with self.assertRaises(ControllerError):
             validate_network([])

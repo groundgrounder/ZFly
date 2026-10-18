@@ -73,4 +73,15 @@ python3 tools/verify-runtime.py --app build/macos/ZFly.app
 build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode --render-preview /tmp/zfly-overview.png
 ```
 
-2026-10-18 验证结果：macOS Apple Silicon 发布构建、签名和资源校验通过；24 项离线回归测试在包内 Python 中通过；含空格路径下的应用搬移测试通过（运行时、原生模块、TLS 证书）。沙箱禁止本机 socket 绑定，集成脚本返回 77；安全模式 GUI 直接启动在系统应用注册阶段退出（退出码 -6），LaunchServices 启动返回 -10827，未能获得截图。真实外部代理连接、系统代理接管和恢复、TUN、Intel / 旧版 macOS、GTK / Nix 构建与运行尚未验证。
+2026-10-18 验证结果：macOS Apple Silicon 发布构建、签名和资源校验通过；24 项离线回归测试在包内 Python 中通过；含空格路径下的应用搬移测试通过（运行时、原生模块、TLS 证书）。沙箱禁止本机 socket 绑定，集成脚本返回 77；安全模式 GUI 直接启动在系统应用注册阶段退出（退出码 -6），LaunchServices 启动返回 -10827，未能获得截图。真实外部代理连接、系统代理接管和恢复、TUN、Intel / 旧版 macOS、aarch64 Linux 尚未验证。另已完成 x86_64 Linux 的 Nix 构建、GTK 安全模式的明暗主题和窄窗检查，以及 GTK 交互回归；这些验证未启动真实代理核心或修改宿主系统代理。
+
+
+GTK 交互回归需在带 GTK / libadwaita 的隔离图形会话内显式使用安全模式，并将 XDG 配置、数据和缓存目录指向临时目录：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=linux:runtime python3 linux/tests/test_ui.py --safe-mode -v
+```
+
+测试只使用演示控制器，覆盖独立订阅导航、模式切换与失败恢复、无结果状态、弹窗校验、诊断结果、草稿保留、资源缓存、恢复后的状态更新、导出文件权限和窄窗布局。普通 unittest discovery 会跳过这些需要图形会话的测试。
+
+GTK 安全模式使用独立的应用实例标识，与正常运行的 ZFly 分开。保存期间表单会等待操作结束后再允许关闭；YAML 和高级配置导出使用仅当前用户可读写的权限，覆盖已有文件时也会更新权限。

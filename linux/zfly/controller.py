@@ -11,6 +11,12 @@ class ControllerError(Exception):
     pass
 
 
+NETWORK_CONFIG_FIELDS = {
+    "mode": "mode", "mixedPort": "mixed-port", "ipv6": "ipv6",
+    "allowLan": "allow-lan", "tcpConcurrent": "tcp-concurrent", "logLevel": "log-level",
+}
+
+
 class NoRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None

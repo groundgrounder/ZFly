@@ -27,7 +27,7 @@
             version = "0.2.0";
             src = ./linux;
             nativeBuildInputs = [ pkgs.wrapGAppsHook4 pkgs.gobject-introspection pkgs.makeWrapper ];
-            buildInputs = [ pkgs.gtk4 pkgs.libadwaita ];
+            buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme ];
             dontBuild = true;
             installPhase = ''
               runHook preInstall
@@ -46,6 +46,7 @@
                 --set PYTHONDONTWRITEBYTECODE 1 \
                 --set ZFLY_CORE ${pkgs.mihomo}/bin/mihomo \
                 --set ZFLY_CORE_KIND mihomo \
+                --prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.glib ]} \
                 --prefix PYTHONPATH : "$out/share/zfly"
               runHook postInstall

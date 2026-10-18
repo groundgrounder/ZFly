@@ -7,7 +7,7 @@ from pathlib import Path
 import urllib.parse
 import uuid
 
-from .controller import Controller, ControllerError
+from .controller import Controller, ControllerError, NETWORK_CONFIG_FIELDS
 from .catalog_model import PreviewCatalog
 
 WORKSPACE_SECTIONS = {
@@ -143,7 +143,8 @@ class ManagementClient(Controller):
 
 
 class PreviewManagement:
-    def __init__(self):
+    def __init__(self, controller=None):
+        self._controller = controller
         self._state = json.loads(Path(__file__).with_name("preview.json").read_text(encoding="utf-8"))["management"]
         for profile in self._state.get("profiles", []):
             profile["revision"] = "preview:" + profile["id"]
@@ -152,7 +153,13 @@ class PreviewManagement:
         self._catalog = PreviewCatalog()
 
     def snapshot(self):
-        return copy.deepcopy(self._state)
+        state = copy.deepcopy(self._state)
+        if self._controller:
+            configs = self._controller.configuration()
+            for network_key, config_key in NETWORK_CONFIG_FIELDS.items():
+                if config_key in configs:
+                    state["network"][network_key] = configs[config_key]
+        return state
 
     def _file(self, identity):
         return self._files.get(identity, {"name": "演示配置.yaml", "data": base64.b64encode(b"mixed-port: 7890\nmode: rule\n").decode(), "revision": "preview"})
@@ -175,6 +182,8 @@ class PreviewManagement:
             raise ControllerError("操作格式无效。")
         action = command["action"]
         state = self._state
+        if self._controller:
+            state["network"] = self.snapshot()["network"]
         if action.startswith("catalog."):
             return self._catalog.perform(command, state)
         if action.startswith("workspace."):
@@ -209,9 +218,14 @@ class PreviewManagement:
             raise ControllerError("配置已被更新，请刷新列表后重试。")
         if action == "network.save":
             network = command.get("network")
-            if command.get("expected") != state["network"]:
+            if command.get("expected") != self.snapshot()["network"]:
                 raise ControllerError("网络设置已修改，请重新载入。")
             validate_network(network)
+            if self._controller:
+                baseline = self._controller.configuration()
+                draft = {**baseline, **{config_key: network[network_key]
+                         for network_key, config_key in NETWORK_CONFIG_FIELDS.items()}}
+                self._controller.configure(draft, baseline)
             state["network"] = copy.deepcopy(network)
         elif action == "running.set":
             if type(command.get("running")) is not bool:

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">ZFly</title>
+  <desc id="desc">A folded Z wing in ice white and cyan on a deep blue rounded tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="180" y1="96" x2="854" y2="938" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#167fba"/>
+      <stop offset=".47" stop-color="#1455ac"/>
+      <stop offset="1" stop-color="#12275d"/>
+    </linearGradient>
+    <radialGradient id="light" cx=".24" cy="0" r="1.03">
+      <stop stop-color="#5ce6e6" stop-opacity=".56"/>
+      <stop offset=".65" stop-color="#218aca" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="260" y1="72" x2="794" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c2ffff" stop-opacity=".72"/>
+      <stop offset=".52" stop-color="#a9e9ff" stop-opacity=".09"/>
+      <stop offset="1" stop-color="#92b9ff" stop-opacity=".3"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="470" y1="292" x2="570" y2="740" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/>
+      <stop offset=".3" stop-color="#e3fcff"/>
+      <stop offset="1" stop-color="#79eee8"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="690" y1="404" x2="334" y2="650" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#30adc8"/>
+      <stop offset=".38" stop-color="#82e6eb"/>
+      <stop offset="1" stop-color="#d3ffff"/>
+    </linearGradient>
+    <filter id="tile-shadow" x="-.2" y="-.2" width="1.4" height="1.5" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="17" flood-color="#081a3e" flood-opacity=".24"/>
+    </filter>
+    <filter id="wing-shadow" x="-.2" y="-.2" width="1.4" height="1.5" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="15" stdDeviation="14" flood-color="#00183c" flood-opacity=".28"/>
+    </filter>
+    <path id="tile-shape" d="M302 64H722C878 64 960 146 960 302V722C960 878 878 960 722 960H302C146 960 64 878 64 722V302C64 146 146 64 302 64Z"/>
+    <path id="z" d="M300 292H778L744 400 474 624H742L700 738H244L284 630 554 406H258Z"/>
+  </defs>
+  <use href="#tile-shape" fill="url(#tile)" filter="url(#tile-shadow)"/>
+  <use href="#tile-shape" fill="url(#light)"/>
+  <use href="#tile-shape" fill="none" stroke="url(#edge)" stroke-width="3"/>
+  <use href="#z" fill="url(#wing)" filter="url(#wing-shadow)"/>
+  <path d="M554 406 744 400 474 624 284 630Z" fill="url(#fold)"/>
+  <path d="M300 292H778M284 630 554 406" fill="none" stroke="#fff" stroke-opacity=".68" stroke-width="2"/>
+</svg>

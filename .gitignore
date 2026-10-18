@@ -1,0 +1,9 @@
+/FlClash/
+/build/
+**/.build/
+**/.swiftpm/
+__pycache__/
+*.py[cod]
+.DS_Store
+/result
+/result-*

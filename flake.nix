@@ -1,0 +1,68 @@
+{
+  description = "ZFly standalone GTK proxy client with an app-owned mihomo core";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in {
+      packages = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
+          desktopItem = pkgs.makeDesktopItem {
+            name = "io.github.zfly.ZFly";
+            desktopName = "ZFly";
+            comment = "Standalone proxy and subscription manager";
+            exec = "zfly";
+            icon = "io.github.zfly.ZFly";
+            categories = [ "Network" ];
+            terminal = false;
+          };
+        in {
+          default = pkgs.stdenvNoCC.mkDerivation {
+            pname = "zfly";
+            version = "0.2.0";
+            src = ./linux;
+            nativeBuildInputs = [ pkgs.wrapGAppsHook4 pkgs.gobject-introspection pkgs.makeWrapper ];
+            buildInputs = [ pkgs.gtk4 pkgs.libadwaita ];
+            dontBuild = true;
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/share/zfly" "$out/bin"
+              cp -r zfly "$out/share/zfly/"
+              cp -r ${./runtime/zfly_runtime} "$out/share/zfly/zfly_runtime"
+              cp -r ${desktopItem}/share/applications "$out/share/"
+              install -Dm644 ${./assets/icon.svg} "$out/share/icons/hicolor/scalable/apps/io.github.zfly.ZFly.svg"
+              for size in 16 32 48 64 128 256 512 1024; do
+                install -Dm644 ${./assets/icons}/zfly-$size.png \
+                  "$out/share/icons/hicolor/''${size}x''${size}/apps/io.github.zfly.ZFly.png"
+              done
+              makeWrapper ${python}/bin/python3 "$out/bin/zfly" \
+                --add-flags "-m zfly" \
+                --set ZFLY_EXECUTABLE "$out/bin/zfly" \
+                --set PYTHONDONTWRITEBYTECODE 1 \
+                --set ZFLY_CORE ${pkgs.mihomo}/bin/mihomo \
+                --set ZFLY_CORE_KIND mihomo \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.glib ]} \
+                --prefix PYTHONPATH : "$out/share/zfly"
+              runHook postInstall
+            '';
+            meta = {
+              description = "Standalone GTK proxy client with profiles, subscriptions and mihomo";
+              mainProgram = "zfly";
+              license = pkgs.lib.licenses.gpl3Only;
+              platforms = systems;
+            };
+          };
+        });
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/zfly";
+        };
+      });
+    };
+}

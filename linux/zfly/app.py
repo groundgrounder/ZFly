@@ -6,15 +6,17 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from .controller import Controller, ControllerError, PreviewController
 from .management import ManagementClient, PreviewManagement
 from .settings import SettingsPanel
-from .workspace import WorkspacePanel, ToolsPanel
+from .profiles import ProfilesPanel
+from .workspace import WorkspacePanel
+from .tools import ToolsPanel
 from .catalog import CatalogPanel
 from .native_runtime import NativeRuntime
-from .ui import EmptyState, install_styles, label, page, page_box
+from .ui import EmptyState, button as action_button, clear, install_styles, label, page, page_box
 
 
 def size(value):
@@ -31,24 +33,6 @@ def destination(connection):
     port = meta.get("destinationPort")
     return f"{host}:{port}" if port else host
 
-
-def clear(box):
-    child = box.get_first_child()
-    while child:
-        following = child.get_next_sibling()
-        box.remove(child)
-        child = following
-
-
-def action_button(label, callback, icon=None):
-    button = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
-    if icon:
-        button.set_icon_name(icon)
-    button.set_tooltip_text(label)
-    button.connect("clicked", lambda _button: callback())
-    return button
-
-
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, preview):
         super().__init__(application=app, title="ZFly", default_width=1040, default_height=720)
@@ -63,6 +47,8 @@ class Window(Adw.ApplicationWindow):
         self.data_directory = ""
         self.data = None
         self.delays = {}
+        self.delay_errors = {}
+        self.delay_scope = None
         self.busy = False
         self.refreshing = False
         self.operation_revision = 0
@@ -127,7 +113,8 @@ class Window(Adw.ApplicationWindow):
 
         self.settings_panel = SettingsPanel(self)
         self.stack.add_named(self.settings_panel, "设置")
-        self.stack.add_named(self.settings_panel.profiles, "配置与订阅")
+        self.profiles_panel = ProfilesPanel(self)
+        self.stack.add_named(self.profiles_panel, "配置与订阅")
         self.workspace_panel = WorkspacePanel(self)
         self.catalog_panel = CatalogPanel(self)
         self.tools_panel = ToolsPanel(self)
@@ -311,7 +298,7 @@ class Window(Adw.ApplicationWindow):
                 self.search.set_text("")
             self._render_lists(force=True)
             if self.page == "规则与高级":
-                self.workspace_panel.receive()
+                self.workspace_panel.receive(refresh=True)
             if self.page == "自定义资源":
                 self.catalog_panel.receive()
 
@@ -406,7 +393,10 @@ class Window(Adw.ApplicationWindow):
         self.set_sensitive(False)
         self.status.set_label("正在还原系统代理并退出…")
         def work():
-            stopped = self.runtime.stop()
+            try:
+                stopped = self.runtime.stop()
+            except Exception:
+                stopped = False
             GLib.idle_add(finished, stopped)
         def finished(stopped):
             if stopped:
@@ -416,6 +406,7 @@ class Window(Adw.ApplicationWindow):
                 self.closed = False
                 self.set_sensitive(True)
                 self.timer = GLib.timeout_add_seconds(2, self._tick)
+                self._sensitivity()
                 self.toast("运行时仍在清理，请稍后再次退出。")
             return GLib.SOURCE_REMOVE
         threading.Thread(target=work, daemon=True, name="zfly-shutdown").start()
@@ -448,7 +439,7 @@ class Window(Adw.ApplicationWindow):
         self.proxy_list.set_sensitive(not self.busy and self.connected)
         self.connection_list.set_sensitive(not self.busy and self.connected)
         self.settings_panel.set_sensitive(not self.busy)
-        self.settings_panel.profiles.set_sensitive(not self.busy)
+        self.profiles_panel.set_sensitive(not self.busy)
         self.workspace_panel.set_sensitive(not self.busy)
         self.catalog_panel.set_sensitive(not self.busy)
         self.tools_panel.set_sensitive(not self.busy)
@@ -456,7 +447,7 @@ class Window(Adw.ApplicationWindow):
 
     def _submit(self, operation, receive, action=False, done=None, background=False, on_error=None):
         if self.busy or self.closed or (background and self.refreshing):
-            return
+            return False
         if background:
             self.refreshing = True
         else:
@@ -467,31 +458,36 @@ class Window(Adw.ApplicationWindow):
         self._sensitivity()
 
         def finish(value, error):
-            if self.closed:
-                return GLib.SOURCE_REMOVE
+            # A close request may be rolled back after a shutdown timeout. Always
+            # release task state and pending dialogs even when results are stale.
             if background:
                 self.refreshing = False
             else:
                 self.busy = False
-            if done:
-                done()
-            if revision == self.generation and operation_revision == self.operation_revision:
-                if error:
-                    if on_error:
-                        on_error(str(error))
-                    elif action:
-                        self.toast(str(error))
+            try:
+                if done:
+                    done()
+                if self.closed:
+                    return GLib.SOURCE_REMOVE
+                if revision == self.generation and operation_revision == self.operation_revision:
+                    if error:
+                        if on_error:
+                            on_error(str(error))
+                        elif action:
+                            self.toast(str(error))
+                        else:
+                            self.connected = False
+                            self.status.set_label("连接失败：" + str(error))
                     else:
-                        self.connected = False
-                        self.status.set_label("连接失败：" + str(error))
-                else:
-                    try:
-                        receive(value)
-                    except Exception:
-                        (on_error or self.toast)("返回的数据格式无效，请刷新后重试。")
-            self._sensitivity()
-            self.workspace_panel.resume()
-            self.catalog_panel.resume()
+                        try:
+                            receive(value)
+                        except Exception:
+                            (on_error or self.toast)("返回的数据格式无效，请刷新后重试。")
+            finally:
+                if not self.closed:
+                    self._sensitivity()
+                    self.workspace_panel.resume()
+                    self.catalog_panel.resume()
             return GLib.SOURCE_REMOVE
 
         def work():
@@ -504,6 +500,7 @@ class Window(Adw.ApplicationWindow):
                 GLib.idle_add(finish, value, None)
 
         threading.Thread(target=work, daemon=True, name="zfly-controller").start()
+        return True
 
     def toast(self, message):
         self.toasts.add_toast(Adw.Toast(title=message))
@@ -525,23 +522,29 @@ class Window(Adw.ApplicationWindow):
             return data, core_error, state, status
         def receive(result):
             data, core_error, state, status = result
-            self.management_state, self.management_status = state, status
+            self.set_management_state(state)
+            self.management_status = status
             if data:
                 self._receive(data)
             else:
                 self.connected = False
                 self.status.set_label("核心未连接：" + (core_error or "请检查 ZFly 运行信息。"))
-            self.settings_panel.receive()
-            self.workspace_panel.receive()
+                self.settings_panel.receive()
+                self.profiles_panel.receive()
+            self.workspace_panel.receive(refresh=True)
             self.catalog_panel.receive()
         self._submit(work, receive, background=True)
 
-    def manage(self, command, receive=None, pending=None, done=None, on_error=None):
+    def manage(self, command, receive=None, pending=None, done=None, on_error=None, background=False):
         if not self.management_client or self.management_state is None:
             (on_error or self.toast)("请等待 ZFly 本地运行时就绪。")
-            return
-        if self.busy or self.closed:
-            return
+            if done:
+                done()
+            return False
+        if self.busy or self.closed or (background and self.refreshing):
+            if done:
+                done()
+            return False
         management = self.management_client
         if pending:
             pending.operation_pending = True
@@ -555,22 +558,37 @@ class Window(Adw.ApplicationWindow):
             if done:
                 done()
         def apply(result):
-            self.management_state = result["state"]
+            self.set_management_state(result["state"])
+            changes_nodes = command["action"] in ("profile.select", "profile.update", "profile.write", "catalog.save", "catalog.delete")
+            changes_nodes |= command["action"] == "workspace.write" and command.get("section") == "app"
+            changes_nodes |= command["action"] == "tool.run" and command.get("tool") in (
+                "apply", "restart", "updateProfiles", "updateProvider", "updateResources",
+            )
+            if changes_nodes:
+                self.delays.clear()
+                self.delay_errors.clear()
+                self.last_proxies = None
             restored = command["action"] == "tool.run" and command.get("tool") in (
                 "restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll",
             )
             if restored:
                 self.catalog_panel.reset()
+                self.profiles_panel.reset()
                 if command["tool"].endswith("All"):
                     self.workspace_panel.reset()
                     self.settings_panel.reset()
                 else:
                     self.workspace_panel.invalidate_profiles()
                 self.delays.clear()
+                self.delay_errors.clear()
                 self.last_proxies = self.last_connections = None
-            if self.preview and command["action"] == "network.save":
+            if self.preview and (command["action"] == "network.save" or (
+                command["action"] == "workspace.write" and command.get("section") == "core"
+            )):
                 self._receive(self.controller.snapshot())
-            self.settings_panel.receive()
+            else:
+                self.settings_panel.receive()
+                self.profiles_panel.receive()
             if receive:
                 receive(result)
             self.workspace_panel.receive()
@@ -579,9 +597,31 @@ class Window(Adw.ApplicationWindow):
                 self.toast("已更新演示数据" if self.preview else "操作已完成。")
             if restored:
                 self.refresh()
-        self._submit(lambda: management.perform(command), apply, action=True, done=complete, on_error=on_error)
+        accepted = self._submit(lambda: management.perform(command), apply, action=True,
+                                done=complete, on_error=on_error, background=background)
+        if not accepted:
+            complete()
+        return accepted
+
+    def set_management_state(self, state):
+        current = next((profile for profile in state["profiles"]
+                        if profile["id"] == state["currentProfileID"]), None) if state else None
+        scope = (current["id"], current.get("revision")) if current else None
+        if scope != self.delay_scope:
+            self.delays.clear()
+            self.delay_errors.clear()
+            self.last_proxies = None
+            self.delay_scope = scope
+        self.management_state = state
 
     def _receive(self, data):
+        previous = self.data["proxies"]["proxies"] if self.data else {}
+        proxies = data["proxies"]["proxies"]
+        for name in set(self.delays) | set(self.delay_errors):
+            if name not in proxies or proxies[name].get("history") != previous.get(name, {}).get("history"):
+                self.delays.pop(name, None)
+                self.delay_errors.pop(name, None)
+                self.last_proxies = None
         self.data = data
         self.connected = True
         self.status.set_label("本地运行时未连接" if self.management_state is None else "离线预览 · 无系统变更" if self.preview else "代理运行中" if self.management_state["running"] else "代理已停止")
@@ -600,6 +640,7 @@ class Window(Adw.ApplicationWindow):
             self.metric_rows[name].set_label(value)
         self._render_lists()
         self.settings_panel.receive()
+        self.profiles_panel.receive()
 
     def _render_lists(self, force=False):
         if not self.data:
@@ -654,7 +695,8 @@ class Window(Adw.ApplicationWindow):
             info = proxies.get(proxy, {})
             history = info.get("history") or []
             delay = self.delays.get(proxy, history[-1].get("delay") if history else None)
-            delay_text = "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
+            error = self.delay_errors.get(proxy)
+            delay_text = "测速失败" if error else "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
             row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy'))
             row.set_use_markup(False)
             row.set_title_lines(1)
@@ -663,7 +705,9 @@ class Window(Adw.ApplicationWindow):
                 row.add_prefix(Gtk.Image(icon_name="object-select-symbolic"))
             latency = Gtk.Label(label=delay_text, valign=Gtk.Align.CENTER)
             latency.add_css_class("caption")
-            latency.add_css_class("dim-label" if delay is None else "error" if delay <= 0 else "success" if delay < 150 else "warning")
+            latency.add_css_class("warning" if error else "dim-label" if delay is None else "error" if delay <= 0 else "success" if delay < 150 else "warning")
+            if error:
+                latency.set_tooltip_text(error)
             row.add_suffix(latency)
             row.add_suffix(action_button("测速", lambda proxy=proxy: self._action("delay", proxy)))
             if manual:
@@ -717,9 +761,10 @@ class Window(Adw.ApplicationWindow):
         def receive(result):
             value, data, state = result
             if state:
-                self.management_state = state
+                self.set_management_state(state)
             if method == "delay":
                 self.delays[args[0]] = value
+                self.delay_errors.pop(args[0], None)
                 self.last_proxies = None
             self._receive(data)
 
@@ -735,15 +780,25 @@ class Window(Adw.ApplicationWindow):
         controller = self.controller
         def measure(name):
             try:
-                return name, controller.delay(name)
-            except ControllerError:
-                return name, 0
+                return name, controller.delay(name), None
+            except ControllerError as error:
+                return name, None, str(error)
         def work():
             with ThreadPoolExecutor(max_workers=4) as pool:
-                return dict(pool.map(measure, members))
-        def receive(values):
-            self.delays.update(values)
+                return list(pool.map(measure, members))
+        def receive(results):
+            failed = 0
+            for name, delay, error in results:
+                if error:
+                    self.delays.pop(name, None)
+                    self.delay_errors[name] = error
+                    failed += 1
+                else:
+                    self.delays[name] = delay
+                    self.delay_errors.pop(name, None)
             self._render_proxies()
+            if failed:
+                self.toast(f"{failed} 个节点测速请求失败，可重试；节点状态尚未确认。")
         self._submit(work, receive, action=True)
 
     def settings(self):

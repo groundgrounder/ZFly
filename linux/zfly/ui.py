@@ -23,6 +23,50 @@ STYLES = """
 """
 
 
+def button(label, callback, icon=None):
+    item = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+    if icon:
+        item.set_icon_name(icon)
+    item.set_tooltip_text(label)
+    item.connect("clicked", lambda _button: callback())
+    return item
+
+
+def entry(group, title, text="", password=False):
+    row = (Adw.PasswordEntryRow if password else Adw.EntryRow)(title=title, text=str(text))
+    row.connect("changed", lambda item: item.remove_css_class("error"))
+    group.add(row)
+    return row
+
+
+def switch(group, title, active=False):
+    row = Adw.SwitchRow(title=title, active=active)
+    group.add(row)
+    return row
+
+
+def choice(group, title, values, current):
+    names = {"rule": "规则", "global": "全局", "direct": "直连", "silent": "静默", "error": "错误", "warning": "警告", "info": "信息", "debug": "调试", "off": "关闭", "always": "始终", "strict": "严格"}
+    row = Adw.ComboRow(title=title, model=Gtk.StringList.new([names.get(value, value) for value in values]))
+    if current in values:
+        row.set_selected(values.index(current))
+    row.values = values
+    group.add(row)
+    return row
+
+
+def chosen(row):
+    return row.values[row.get_selected()]
+
+
+def clear(box):
+    child = box.get_first_child()
+    while child:
+        following = child.get_next_sibling()
+        box.remove(child)
+        child = following
+
+
 def install_styles():
     provider = Gtk.CssProvider()
     provider.load_from_data(STYLES.encode())

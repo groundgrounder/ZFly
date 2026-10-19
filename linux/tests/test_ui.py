@@ -6,6 +6,7 @@ or use the host's networking settings. XDG directories should be temporary.
 
 import os
 import copy
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -94,7 +95,7 @@ class InterfaceTests(unittest.TestCase):
     def test_profiles_navigation_does_not_change_settings_category(self):
         self.window.settings_panel.categories.set_selected(1)
         self.window.navigate_to(1)
-        self.assertIs(self.window.stack.get_visible_child(), self.window.settings_panel.profiles)
+        self.assertIs(self.window.stack.get_visible_child(), self.window.profiles_panel)
         self.window.navigate_to(7)
         self.assertIs(self.window.stack.get_visible_child(), self.window.settings_panel)
         self.assertEqual(self.window.settings_panel.stack.get_visible_child_name(), "network")
@@ -143,7 +144,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertFalse(self.window.connection_no_results.get_visible())
 
     def test_subscription_validation_is_visible_inside_the_dialog(self):
-        self.window.settings_panel.profile_properties()
+        self.window.profiles_panel.profile_properties()
         self.wait(lambda: self.dialog() is not None)
         dialog = self.dialog()
         self.assertTrue(any(isinstance(child, Adw.HeaderBar) for child in descendants(dialog)))
@@ -156,7 +157,7 @@ class InterfaceTests(unittest.TestCase):
         self.wait(lambda: self.dialog() is None)
 
     def test_subscription_server_error_stays_in_the_dialog_and_unlocks_it(self):
-        self.window.settings_panel.profile_properties()
+        self.window.profiles_panel.profile_properties()
         self.wait(lambda: self.dialog() is not None)
         dialog = self.dialog()
         url = next(child for child in descendants(dialog) if isinstance(child, Adw.EntryRow) and child.get_title() == "订阅 URL")
@@ -173,7 +174,7 @@ class InterfaceTests(unittest.TestCase):
     def test_form_width_follows_a_narrow_main_window(self):
         self.window.set_default_size(360, 760)
         self.wait(lambda: self.window.get_width() == 360 and self.window.split.get_collapsed())
-        self.window.settings_panel.profile_properties()
+        self.window.profiles_panel.profile_properties()
         self.wait(lambda: self.dialog() is not None and self.dialog().get_width() > 0)
         self.assertLessEqual(self.dialog().get_width(), self.window.get_width())
         self.assertTrue(self.window.split.get_collapsed())
@@ -184,7 +185,7 @@ class InterfaceTests(unittest.TestCase):
                 self.window.set_default_size(width, 760)
                 self.wait(lambda: self.window.get_width() == width and self.window.split.get_collapsed() == (width <= 700))
                 self.window.navigate_to(1)
-                self.assertIs(self.window.stack.get_visible_child(), self.window.settings_panel.profiles)
+                self.assertIs(self.window.stack.get_visible_child(), self.window.profiles_panel)
                 self.assertTrue(self.window.split.get_show_content())
 
     def test_catalog_json_error_is_local_and_preserves_the_draft(self):
@@ -284,7 +285,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(configs["log-level"], "debug")
 
     def test_pending_subscription_cannot_close_before_the_save_finishes(self):
-        self.window.settings_panel.profile_properties()
+        self.window.profiles_panel.profile_properties()
         self.wait(lambda: self.dialog() is not None)
         dialog = self.dialog()
         url = next(child for child in descendants(dialog) if isinstance(child, Adw.EntryRow) and child.get_title() == "订阅 URL")
@@ -381,6 +382,204 @@ class InterfaceTests(unittest.TestCase):
         self.assertNotIn(key, workspace.drafts)
         self.assertEqual(workspace.drafts[("dns", None)]["text"], '{"keep": true}')
 
+    def assert_shutdown_timeout_releases_task(self, background):
+        operation_release, shutdown_release, cleaned = threading.Event(), threading.Event(), threading.Event()
+        received = []
+        class Runtime:
+            def stop(_runtime):
+                shutdown_release.wait(3)
+                return False
+        def operation():
+            operation_release.wait(3)
+        self.window.runtime = Runtime()
+        try:
+            self.assertTrue(self.window._submit(operation, received.append, background=background, done=cleaned.set))
+            self.window.preview = False
+            self.window.close()
+            self.assertTrue(self.window.closed)
+            operation_release.set()
+            self.wait(cleaned.is_set)
+            self.assertFalse(self.window.busy)
+            self.assertFalse(self.window.refreshing)
+            shutdown_release.set()
+            self.wait(lambda: not self.window.closed)
+            self.assertTrue(self.window.get_sensitive())
+            self.assertFalse(received)
+            complete = threading.Event()
+            self.assertTrue(self.window._submit(lambda: None, lambda _: complete.set()))
+            self.wait(complete.is_set)
+        finally:
+            operation_release.set()
+            shutdown_release.set()
+            self.window.preview = True
+
+    def test_shutdown_timeout_releases_foreground_task_and_accepts_new_work(self):
+        self.assert_shutdown_timeout_releases_task(background=False)
+
+    def test_shutdown_timeout_releases_background_task_and_restores_polling(self):
+        self.assert_shutdown_timeout_releases_task(background=True)
+
+    def test_saved_core_settings_remain_successful_when_followup_snapshot_fails(self):
+        messages = []
+        self.window.toast = messages.append
+        panel = self.window.settings_panel
+        panel.core_fields["mode"].set_selected(1)
+        with patch.object(self.window.controller, "snapshot", side_effect=ControllerError("测试：快照读取失败")):
+            panel.save_core()
+            self.wait(lambda: not self.window.busy and not self.window.refreshing)
+        self.assertEqual(self.window.controller.configuration()["mode"], "global")
+        self.assertTrue(any("设置已保存" in message for message in messages))
+        self.assertFalse(panel._dirty(panel.core_fields, panel.core_baseline))
+        self.window.refresh()
+        self.wait(lambda: not self.window.refreshing)
+        self.assertEqual(panel.core_baseline["mode"], "global")
+
+    def proxy_labels(self, name):
+        self.window._render_proxies()
+        row = next(item for item in descendants(self.window.proxy_list)
+                   if isinstance(item, Adw.ActionRow) and item.get_title() == name)
+        return [item.get_label() for item in descendants(row) if isinstance(item, Gtk.Label)]
+
+    def measure_node(self, name, delay):
+        with patch.object(self.window.controller, "delay", return_value=delay):
+            self.window._action("delay", name)
+            self.wait(lambda: not self.window.busy)
+        self.assertIn(f"{delay} ms", self.proxy_labels(name))
+
+    def test_profile_switch_discards_another_profiles_latency(self):
+        self.window.navigate_to(2)
+        self.measure_node("东京 / Tokyo", 9876)
+        profile = next(item for item in self.window.management_state["profiles"]
+                       if item["id"] != self.window.management_state["currentProfileID"])
+        self.window.manage({"action": "profile.select", "id": profile["id"]})
+        self.wait(lambda: not self.window.busy)
+        self.assertNotIn("9876 ms", self.proxy_labels("东京 / Tokyo"))
+        self.assertIn("42 ms", self.proxy_labels("东京 / Tokyo"))
+
+    def test_catalog_edits_invalidate_same_name_node_latency(self):
+        self.window.navigate_to(2)
+        self.measure_node("东京 / Tokyo", 9876)
+        manager = self.window.management_client
+        command = {"action": "catalog.read", "section": "proxies"}
+        document = manager.perform(command)["document"]
+        self.window.manage({**command, "action": "catalog.save", "text": document["text"],
+                            "revision": document["revision"]})
+        self.wait(lambda: not self.window.busy)
+        self.assertNotIn("9876 ms", self.proxy_labels("东京 / Tokyo"))
+
+    def test_new_core_history_replaces_cached_latency(self):
+        self.window.navigate_to(2)
+        self.measure_node("东京 / Tokyo", 9876)
+        self.window.controller._data["proxies"]["proxies"]["东京 / Tokyo"]["history"] = [{"delay": 12}]
+        self.window.refresh()
+        self.wait(lambda: not self.window.refreshing)
+        self.assertIn("12 ms", self.proxy_labels("东京 / Tokyo"))
+        self.assertNotIn("9876 ms", self.proxy_labels("东京 / Tokyo"))
+
+    def test_group_transport_failure_is_distinct_from_an_unavailable_node(self):
+        self.window.navigate_to(2)
+        original = self.window.controller.delay
+        def measure(name):
+            if name == "东京 / Tokyo":
+                raise ControllerError("测试：请求未完成")
+            return original(name)
+        with patch.object(self.window.controller, "delay", side_effect=measure):
+            self.window.measure_group()
+            self.wait(lambda: not self.window.busy)
+        labels = self.proxy_labels("东京 / Tokyo")
+        self.assertIn("测速失败", labels)
+        self.assertNotIn("不可用", labels)
+        self.assertIn("42 ms", self.proxy_labels("自动选择"))
+
+    def log_text(self):
+        buffer = self.window.workspace_panel.buffer
+        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+
+    def test_readonly_history_refreshes_on_toolbar_refresh_and_reentry(self):
+        self.window.navigate_to(5)
+        panel = self.window.workspace_panel
+        panel.section.set_selected(panel.section_names.index("logs"))
+        self.wait(lambda: ("logs", None) in panel.drafts and not self.window.busy and not self.window.refreshing)
+        manager = self.window.management_client
+        document = manager.perform({"action": "workspace.read", "section": "logs"})["document"]
+        manager._documents[("logs", None)] = {**document, "text": '[{"Payload":"FIRST NEW LOG"}]', "revision": "first"}
+        self.window.refresh()
+        self.wait(lambda: "FIRST NEW LOG" in self.log_text() and not self.window.refreshing)
+        self.window.navigate_to(0)
+        manager._documents[("logs", None)] = {**document, "text": '[{"Payload":"SECOND NEW LOG"}]', "revision": "second"}
+        self.window.navigate_to(5)
+        self.wait(lambda: "SECOND NEW LOG" in self.log_text() and not self.window.busy and not self.window.refreshing)
+
+    def test_toolbar_refresh_keeps_editable_unsaved_workspace_text(self):
+        self.window.navigate_to(5)
+        panel = self.window.workspace_panel
+        self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
+        panel.buffer.set_text('{"keep this draft": true}')
+        self.window.refresh()
+        self.wait(lambda: not self.window.refreshing)
+        self.assertEqual(self.log_text(), '{"keep this draft": true}')
+
+    def test_preview_core_workspace_updates_overview_and_settings(self):
+        self.window.navigate_to(5)
+        panel = self.window.workspace_panel
+        panel.section.set_selected(panel.section_names.index("core"))
+        self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
+        value = json.loads(self.log_text())
+        panel.buffer.set_text(json.dumps({**value, "mode": "global", "ipv6": True}))
+        panel.save()
+        self.wait(lambda: not self.window.busy and not self.window.refreshing)
+        self.assertTrue(self.window.mode_buttons["global"].get_active())
+        self.assertEqual(self.window.management_state["network"]["mode"], "global")
+        self.assertEqual(self.window.data["configs"]["mode"], "global")
+        self.assertTrue(self.window.settings_panel.core_fields["ipv6"].get_active())
+
+    def import_chooser(self, target):
+        class Chooser:
+            def __init__(self, **_kwargs):
+                pass
+            def connect(self, _signal, callback):
+                self.callback = callback
+            def show(self):
+                self.callback(self, Gtk.ResponseType.ACCEPT)
+            def get_file(self):
+                return target
+            def destroy(self):
+                pass
+        return Chooser
+
+    def test_remote_yaml_import_does_not_require_a_path_or_block_the_ui(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        class RemoteFile:
+            def read(_file, _cancellable):
+                if threading.current_thread() is threading.main_thread():
+                    raise AssertionError("file read blocked the GTK thread")
+                release.wait(3)
+                return Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(b"mixed-port: 7890\n"))
+            def get_basename(_file):
+                return "RemoteSource.yaml"
+        with patch("zfly.profiles.Gtk.FileChooserNative", self.import_chooser(RemoteFile())):
+            self.window.profiles_panel.import_file()
+        self.assertTrue(self.window.busy)
+        self.pump()
+        release.set()
+        self.wait(lambda: any(item["label"] == "RemoteSource" for item in self.window.management_state["profiles"]) and not self.window.busy)
+
+    def test_import_size_limit_rejects_file_before_creating_a_profile(self):
+        errors = []
+        self.window.toast = errors.append
+        before = len(self.window.management_state["profiles"])
+        class RemoteFile:
+            def read(_file, _cancellable):
+                return Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(b"x" * (4 * 1024 * 1024 + 1)))
+            def get_basename(_file):
+                return "oversized.yaml"
+        with patch("zfly.profiles.Gtk.FileChooserNative", self.import_chooser(RemoteFile())):
+            self.window.profiles_panel.import_file()
+        self.wait(lambda: not self.window.busy)
+        self.assertEqual(len(self.window.management_state["profiles"]), before)
+        self.assertTrue(any("4 MiB" in error for error in errors))
+
     def export_chooser(self, path):
         class Chooser:
             def __init__(self, **_kwargs):
@@ -416,8 +615,8 @@ class InterfaceTests(unittest.TestCase):
             target = Path(temporary) / "profile.yaml"
             target.write_text("old")
             target.chmod(0o644)
-            with patch("zfly.settings.Gtk.FileChooserNative", self.export_chooser(target)):
-                self.window.settings_panel.export_file("profile.yaml", b"mixed-port: 7890\n")
+            with patch("zfly.profiles.Gtk.FileChooserNative", self.export_chooser(target)):
+                self.window.profiles_panel.export_file("profile.yaml", b"mixed-port: 7890\n")
             self.assertEqual(target.read_bytes(), b"mixed-port: 7890\n")
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 

@@ -3,8 +3,7 @@ import json
 from gi.repository import Adw, Gtk
 
 from .catalog_model import CATALOG_KINDS
-from .settings import button, choice
-from .ui import EmptyState, label, modal_window, primary_button, show_error
+from .ui import EmptyState, button, choice, clear, label, modal_window, primary_button, show_error
 
 
 class CatalogPanel(Gtk.Box):
@@ -113,11 +112,7 @@ class CatalogPanel(Gtk.Box):
             self.load()
 
     def render(self):
-        child = self.list.get_first_child()
-        while child:
-            following = child.get_next_sibling()
-            self.list.remove(child)
-            child = following
+        clear(self.list)
         items = self.cache.get(self.key(), [])
         for item in items:
             row = Adw.ActionRow(title=item["label"], subtitle=item["detail"])

@@ -1,0 +1,33 @@
+"""Bounded imports and private, atomic exports through Gio.File."""
+from gi.repository import Gio, GLib
+
+from .controller import ControllerError
+
+
+def read_file(target, limit, title="文件"):
+    try:
+        stream = target.read(None)
+        try:
+            chunks, length = [], 0
+            while True:
+                chunk = stream.read_bytes(min(65536, limit + 1 - length), None).get_data()
+                if not chunk:
+                    return b"".join(chunks)
+                chunks.append(chunk)
+                length += len(chunk)
+                if length > limit:
+                    raise ControllerError(f"{title}不能超过 {limit // (1024 * 1024)} MiB。")
+        finally:
+            stream.close(None)
+    except GLib.Error:
+        raise ControllerError("无法读取所选文件，请检查文件权限和连接。") from None
+
+
+def write_file(target, data):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    try:
+        target.replace_contents(data, None, False,
+                                Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, None)
+    except GLib.Error:
+        raise ControllerError("导出失败，请检查目标文件权限和连接。") from None

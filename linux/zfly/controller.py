@@ -1,20 +1,27 @@
 import copy
 import ipaddress
+import http.client
 import json
 from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+
+from zfly_runtime.schema import CONFIG_KEYS, validate_core_config
+from zfly_runtime.storage import RuntimeErrorMessage
 
 
 class ControllerError(Exception):
     pass
 
 
-NETWORK_CONFIG_FIELDS = {
-    "mode": "mode", "mixedPort": "mixed-port", "ipv6": "ipv6",
-    "allowLan": "allow-lan", "tcpConcurrent": "tcp-concurrent", "logLevel": "log-level",
-}
+class TransportError(ControllerError):
+    """The connection failed without confirming the outcome of a request."""
+
+
+class ResponseError(ControllerError):
+    """A response could not confirm the result of the requested operation."""
 
 
 class NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -57,7 +64,7 @@ class Controller:
             urllib.request.ProxyHandler({}), NoRedirects()
         )
 
-    def _request(self, method, *segments, body=None, query=None, timeout=8, management_errors=False):
+    def _request(self, method, *segments, body=None, query=None, timeout=8, management_errors=True):
         path = "/".join(urllib.parse.quote(segment, safe="") for segment in segments)
         url = self.endpoint + "/" + path
         if query:
@@ -97,8 +104,10 @@ class Controller:
             else:
                 message = f"控制器请求失败（HTTP {error.code}）。"
             raise ControllerError(detail or message) from None
-        except (urllib.error.URLError, OSError, ValueError):
-            raise ControllerError("ZFly 内置核心没有响应，请重试启动。") from None
+        except (urllib.error.URLError, OSError, http.client.IncompleteRead):
+            raise TransportError("ZFly 内置核心没有响应，请重试启动。") from None
+        except ValueError:
+            raise ResponseError("控制器返回了无法识别的数据。") from None
 
     def snapshot(self):
         result = {name: self._request("GET", name) for name in ("version", "configs", "proxies", "connections")}
@@ -127,14 +136,22 @@ class Controller:
         patch = config_changes(draft, baseline)
         if not patch:
             return
-        current = self.configuration()
-        if any(current.get(key) != baseline.get(key) for key in patch):
-            raise ControllerError("正在编辑的设置已被其他界面修改，请重新载入。")
-        validate_config({**current, **patch})
-        self._request("PATCH", "configs", body=patch)
-        latest = self.configuration()
-        if any(latest.get(key) != value for key, value in patch.items()):
-            raise ControllerError("核心未应用全部设置，请检查端口占用或配置覆盖。")
+        validate_config({**baseline, **patch})
+        command = {
+            "action": "core.configure", "patch": patch,
+            "expected": {key: baseline.get(key) for key in patch},
+            "requestID": uuid.uuid4().hex,
+        }
+        # Reuse the receipt ID if a committed response was lost in transport.
+        for attempt in range(2):
+            try:
+                result = self._request("POST", "action", body=command, timeout=240)
+                if not isinstance(result, dict) or not isinstance(result.get("state"), dict):
+                    raise ResponseError("保存结果尚未确认，请刷新查看后再操作。")
+                return
+            except (TransportError, ResponseError):
+                if attempt:
+                    raise ControllerError("连接中断，保存结果尚未确认；请刷新查看，避免重复提交。") from None
 
     def select(self, group, proxy):
         self._request("PUT", "proxies", group, body={"name": proxy})
@@ -210,44 +227,13 @@ class PreviewController:
         return "演示操作已完成。"
 
 
-CONFIG_CHOICES = {
-    "mode": ["rule", "global", "direct"],
-    "log-level": ["silent", "error", "warning", "info", "debug"],
-    "find-process-mode": ["off", "strict", "always"],
-}
-CONFIG_FLAGS = ["ipv6", "allow-lan", "tcp-concurrent", "sniffing"]
-CONFIG_PORTS = ["mixed-port", "port", "socks-port"]
-CONFIG_TEXT = ["bind-address"]
-CONFIG_KEYS = set(CONFIG_CHOICES) | set(CONFIG_FLAGS + CONFIG_PORTS + CONFIG_TEXT)
-
-
 def config_changes(draft, baseline):
     return {key: value for key, value in draft.items()
             if key in CONFIG_KEYS and value is not None and value != baseline.get(key)}
 
 
 def validate_config(config):
-    used = []
-    for key in CONFIG_PORTS:
-        value = config.get(key)
-        if value is None:
-            continue
-        if type(value) is not int or not 0 <= value <= 65535:
-            raise ControllerError("端口应为 0–65535 的整数。")
-        if value and value in used:
-            raise ControllerError("监听端口不能重复。")
-        if value:
-            used.append(value)
-    for key, choices in CONFIG_CHOICES.items():
-        if config.get(key) is not None and config[key] not in choices:
-            raise ControllerError("不支持的核心设置：" + key)
-    for key in CONFIG_FLAGS:
-        if config.get(key) is not None and type(config[key]) is not bool:
-            raise ControllerError("开关值无效。")
-    for key in CONFIG_TEXT:
-        value = config.get(key)
-        if value is not None and (not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value)):
-            raise ControllerError("接口和监听地址不能包含控制字符。")
-    bind = config.get("bind-address")
-    if bind is not None and (not bind or any(c.isspace() for c in bind)):
-        raise ControllerError("监听地址不能为空或包含空白。")
+    try:
+        validate_core_config(config)
+    except RuntimeErrorMessage as error:
+        raise ControllerError(str(error)) from None

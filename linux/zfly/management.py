@@ -7,8 +7,11 @@ from pathlib import Path
 import urllib.parse
 import uuid
 
-from .controller import Controller, ControllerError, NETWORK_CONFIG_FIELDS
+from .controller import Controller, ControllerError
+from zfly_runtime.schema import NETWORK_CONFIG_FIELDS
 from .catalog_model import PreviewCatalog
+from zfly_runtime.network import validate_network as validate_runtime_network
+from zfly_runtime.storage import RuntimeErrorMessage
 
 WORKSPACE_SECTIONS = {
     "core": "持久化核心设置", "dns": "DNS 与 hosts", "tun": "TUN 与路由覆盖",
@@ -37,22 +40,10 @@ def preview_document(section):
 
 
 def validate_network(network):
-    if not isinstance(network, dict):
-        raise ControllerError("网络设置需要 JSON 对象。")
-    for key in ("tunEnabled", "systemProxy", "bypassPrivateRoute", "autoSetSystemDns", "appendSystemDns", "ipv6", "allowLan", "tcpConcurrent"):
-        if type(network.get(key)) is not bool:
-            raise ControllerError("网络开关值无效。")
-    if type(network.get("mixedPort")) is not int or not 1 <= network["mixedPort"] <= 65535:
-        raise ControllerError("混合端口应为 1–65535 的整数。")
-    for key, choices in {"mode": ["rule", "global", "direct"], "logLevel": ["silent", "error", "warning", "info", "debug"], "tunStack": ["gvisor", "system", "mixed"]}.items():
-        if network.get(key) not in choices:
-            raise ControllerError("不支持的网络设置：" + key)
-    device = network.get("tunDevice")
-    if not isinstance(device, str) or not device or len(device) > 32 or any(not (c.isalnum() or c in "_.-") for c in device):
-        raise ControllerError("TUN 设备名无效。")
-    domains = network.get("bypassDomains")
-    if not isinstance(domains, list) or any(not isinstance(item, str) or any(ord(c) < 32 for c in item) for item in domains):
-        raise ControllerError("绕过地址应为字符串列表。")
+    try:
+        validate_runtime_network(network, require_tun_permission=False)
+    except RuntimeErrorMessage as error:
+        raise ControllerError(str(error)) from None
 
 
 def _valid_http_url(value):
@@ -177,6 +168,19 @@ class PreviewManagement:
             raise ControllerError("配置文件编码无效。") from None
         return value
 
+    def _document(self, section, identity):
+        key = (section, identity if section in PROFILE_SECTIONS else None)
+        document = copy.deepcopy(self._documents.get(key, preview_document(section)))
+        if section == "core":
+            value = json.loads(document["text"])
+            if self._controller:
+                value.update(self._controller.configuration())
+            value.update({target: self.snapshot()["network"][field]
+                          for field, target in NETWORK_CONFIG_FIELDS.items()})
+            document["text"] = json.dumps(value, ensure_ascii=False, indent=2)
+            document["revision"] = hashlib.sha256(document["text"].encode()).hexdigest()
+        return document
+
     def perform(self, command):
         if not isinstance(command, dict) or not isinstance(command.get("action"), str):
             raise ControllerError("操作格式无效。")
@@ -195,7 +199,7 @@ class PreviewManagement:
             if section in PROFILE_SECTIONS and not any(item["id"] == command.get("id") for item in state["profiles"]):
                 raise ControllerError("请先选择配置。")
             key = (section, command.get("id") if section in PROFILE_SECTIONS else None)
-            document = self._documents.get(key, preview_document(section))
+            document = self._document(section, command.get("id"))
             if action == "workspace.write":
                 if not document["writable"] or command.get("revision") != document["revision"]:
                     raise ControllerError("内容只读或已修改，请重新载入。")
@@ -206,8 +210,17 @@ class PreviewManagement:
                             raise ValueError()
                     except (ValueError, KeyError, TypeError):
                         raise ControllerError("请输入有效的 JSON 对象。") from None
+                if section == "core":
+                    network = {**state["network"], **{field: value[target]
+                               for field, target in NETWORK_CONFIG_FIELDS.items() if target in value}}
+                    validate_network(network)
+                    if self._controller:
+                        baseline = self._controller.configuration()
+                        self._controller.configure({**baseline, **value}, baseline)
+                    state["network"] = network
                 document = {**document, "text": command["text"], "revision": str(uuid.uuid4())}
                 self._documents[key] = document
+                document = self._document(section, command.get("id"))
             return {"state": self.snapshot(), "document": copy.deepcopy(document)}
         profile = next((item for item in state["profiles"] if item["id"] == command.get("id")), None)
         if action.startswith("profile.") and action not in ("profile.add", "profile.import", "profile.create") and profile is None:

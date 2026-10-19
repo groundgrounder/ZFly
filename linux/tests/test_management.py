@@ -1,5 +1,6 @@
 import base64
 import copy
+import json
 import unittest
 
 from zfly.management import PreviewManagement, validate_network, validate_profile_command
@@ -40,6 +41,43 @@ class ManagementValidationTests(unittest.TestCase):
             manager.perform({"action": "network.save", "network": network, "expected": before["network"]})
         self.assertEqual(manager.snapshot(), before)
         self.assertEqual(core.configuration()["mixed-port"], 7890)
+
+    def test_preview_core_workspace_updates_controller_and_network_together(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        document = manager.perform({"action": "workspace.read", "section": "core"})["document"]
+        value = {**json.loads(document["text"]), "mode": "global", "ipv6": True}
+        result = manager.perform({"action": "workspace.write", "section": "core",
+                                  "revision": document["revision"], "text": json.dumps(value)})
+        self.assertEqual(result["state"]["network"]["mode"], "global")
+        self.assertEqual(core.configuration()["mode"], "global")
+        self.assertTrue(core.configuration()["ipv6"])
+        self.assertEqual(manager.perform({"action": "workspace.read", "section": "core"})["document"], result["document"])
+
+    def test_preview_rejects_core_workspace_drafts_after_network_edits(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        document = manager.perform({"action": "workspace.read", "section": "core"})["document"]
+        expected = manager.snapshot()["network"]
+        manager.perform({"action": "network.save", "expected": expected, "network": {**expected, "mode": "direct"}})
+        with self.assertRaisesRegex(ControllerError, "已修改"):
+            manager.perform({"action": "workspace.write", "section": "core",
+                             "revision": document["revision"], "text": document["text"]})
+        self.assertEqual(core.configuration()["mode"], "direct")
+
+    def test_preview_core_workspace_rejection_leaves_all_state_unchanged(self):
+        core = PreviewController()
+        manager = PreviewManagement(core)
+        before = manager.snapshot()
+        baseline = core.configuration()
+        document = manager.perform({"action": "workspace.read", "section": "core"})["document"]
+        value = {**json.loads(document["text"]), "mixed-port": 0, "mode": "global"}
+        with self.assertRaises(ControllerError):
+            manager.perform({"action": "workspace.write", "section": "core",
+                             "revision": document["revision"], "text": json.dumps(value)})
+        self.assertEqual(manager.snapshot(), before)
+        self.assertEqual(core.configuration(), baseline)
+        self.assertEqual(manager.perform({"action": "workspace.read", "section": "core"})["document"], document)
 
     def test_network_validation_rejects_non_objects_and_unsafe_devices(self):
         with self.assertRaises(ControllerError):

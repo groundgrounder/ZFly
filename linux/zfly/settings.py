@@ -66,7 +66,7 @@ class SettingsPanel(Gtk.Box):
         login_enabled, start_hidden = self.startup_state
         startup_group = Adw.PreferencesGroup(
             title="登录启动",
-            description="启动时隐藏窗口后，可再次从应用启动器打开 ZFly。",
+            description="支持托盘的桌面可隐藏到托盘；没有可用托盘时会显示窗口。关闭窗口可留在后台，托盘菜单可退出。",
         )
         self.startup.add(startup_group)
         self.login_row = switch(startup_group, "登录时启动 ZFly", login_enabled)

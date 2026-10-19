@@ -16,6 +16,7 @@ from .workspace import WorkspacePanel
 from .tools import ToolsPanel
 from .catalog import CatalogPanel
 from .native_runtime import NativeRuntime
+from .tray import StatusNotifierTray
 from .ui import EmptyState, button as action_button, clear, install_styles, label, page, page_box
 
 
@@ -378,10 +379,14 @@ class Window(Adw.ApplicationWindow):
         self._submit(start, ready)
 
     def _close(self, *_args):
+        app = self.get_application()
+        if not self.closed and not self.shutdown_complete and app.hide_window(self):
+            return True
         if self.preview:
             self.closed = True
             self.generation += 1
             GLib.source_remove(self.timer)
+            app.window_stopped(self)
             return False
         if self.shutdown_complete:
             return False
@@ -392,6 +397,7 @@ class Window(Adw.ApplicationWindow):
         GLib.source_remove(self.timer)
         self.set_sensitive(False)
         self.status.set_label("正在还原系统代理并退出…")
+        app.update_tray()
         def work():
             try:
                 stopped = self.runtime.stop()
@@ -401,11 +407,17 @@ class Window(Adw.ApplicationWindow):
         def finished(stopped):
             if stopped:
                 self.shutdown_complete = True
+                app.window_stopped(self)
                 self.close()
             else:
                 self.closed = False
                 self.set_sensitive(True)
                 self.timer = GLib.timeout_add_seconds(2, self._tick)
+                app.quitting = False
+                if app.window is self:
+                    app.present_window()
+                else:
+                    self.present()
                 self._sensitivity()
                 self.toast("运行时仍在清理，请稍后再次退出。")
             return GLib.SOURCE_REMOVE
@@ -444,6 +456,7 @@ class Window(Adw.ApplicationWindow):
         self.catalog_panel.set_sensitive(not self.busy)
         self.tools_panel.set_sensitive(not self.busy)
         self._update_overview()
+        self.get_application().update_tray()
 
     def _submit(self, operation, receive, action=False, done=None, background=False, on_error=None):
         if self.busy or self.closed or (background and self.refreshing):
@@ -818,17 +831,101 @@ class Application(Adw.Application):
         self.start_hidden = start_hidden
         self.window = None
         self.hidden_start_hold = False
+        self.hidden_start_timer = 0
+        self.tray = None
+        self.quitting = False
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        connection = self.get_dbus_connection()
+        if connection is not None:
+            try:
+                self.tray = StatusNotifierTray(self, connection)
+            except (GLib.Error, ValueError):
+                self.tray = None
+
+    def do_shutdown(self):
+        if self.hidden_start_timer:
+            GLib.source_remove(self.hidden_start_timer)
+            self.hidden_start_timer = 0
+        if self.tray:
+            self.tray.close()
+        Adw.Application.do_shutdown(self)
 
     def do_activate(self):
         Gtk.Window.set_default_icon_name("io.github.zfly.ZFly")
         if self.window is None or self.window.shutdown_complete:
+            self.quitting = False
             self.window = Window(self, self.preview)
+        self.update_tray()
         if self.start_hidden and not self.preview:
             self.start_hidden = False
+            if self.tray and (self.tray.available or self.tray.checking):
+                self._hold_hidden()
+                if not self.tray.available:
+                    self.hidden_start_timer = GLib.timeout_add(1500, self._hidden_start_fallback)
+                return
+        self.present_window()
+
+    def _hold_hidden(self):
+        if not self.hidden_start_hold:
             self.hidden_start_hold = True
             self.hold()
-            return
-        self.window.present()
+
+    def _release_hidden(self):
+        if self.hidden_start_timer:
+            GLib.source_remove(self.hidden_start_timer)
+            self.hidden_start_timer = 0
         if self.hidden_start_hold:
             self.hidden_start_hold = False
             self.release()
+
+    def _hidden_start_fallback(self):
+        self.hidden_start_timer = 0
+        if not self.tray or not self.tray.available:
+            self.present_window()
+        return GLib.SOURCE_REMOVE
+
+    def tray_changed(self):
+        if self.tray and self.tray.available:
+            if self.hidden_start_timer:
+                GLib.source_remove(self.hidden_start_timer)
+                self.hidden_start_timer = 0
+        elif self.window and not self.window.closed and not self.window.get_visible():
+            if not self.tray or not self.tray.checking:
+                # Never leave a background proxy inaccessible after its panel exits.
+                self.present_window()
+
+    def update_tray(self):
+        if self.tray:
+            self.tray.update()
+
+    def present_window(self):
+        if self.window is None or self.window.shutdown_complete:
+            self.activate()
+            return
+        self._release_hidden()
+        self.window.present()
+
+    def hide_window(self, window):
+        if self.quitting or not self.tray or not self.tray.available:
+            return False
+        self._hold_hidden()
+        window.set_visible(False)
+        return True
+
+    def toggle_proxy(self):
+        if self.window and not self.window.closed and not self.window.busy:
+            self.window.toggle_running()
+
+    def request_exit(self):
+        self.quitting = True
+        if self.window:
+            self.window.close()
+        else:
+            self.quit()
+
+    def window_stopped(self, window):
+        if self.window is window:
+            self._release_hidden()
+            self.update_tray()

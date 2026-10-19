@@ -18,11 +18,11 @@ import uuid
 
 from ._vendor import yaml
 from .network import validate_network
+from .schema import CONFIG_KEYS, NETWORK_CONFIG_FIELDS, validate_core_config
 from .storage import RuntimeErrorMessage, digest, encode_json
 
 MAX_PROFILE = 16 * 1024 * 1024
-NETWORK_KEYS = {"mode": "mode", "mixedPort": "mixed-port", "ipv6": "ipv6", "allowLan": "allow-lan",
-                "tcpConcurrent": "tcp-concurrent", "logLevel": "log-level"}
+NETWORK_KEYS = NETWORK_CONFIG_FIELDS
 TITLES = {"core": "核心设置", "dns": "DNS 与 hosts", "tun": "TUN 与路由覆盖", "geo": "Geo 资源",
           "app": "启动与测试", "dav": "WebDAV 备份连接", "profileOverrides": "配置专属覆盖",
           "globalRules": "全局追加规则", "profileRules": "配置追加规则", "logs": "日志",
@@ -165,6 +165,7 @@ class Service:
         self.proxy_signature = None
         self.update_errors = {}
         self.closing = False
+        self.operation_receipts = {}
         self.proxy_restore_pending = False
 
     def start(self):
@@ -401,6 +402,15 @@ class Service:
         with self.lock:
             if self.closing:
                 raise RuntimeErrorMessage("ZFly 正在退出，请稍候。")
+            request_id = command.get("requestID")
+            if request_id is not None:
+                if command["action"] != "core.configure" or not isinstance(request_id, str) or not re.fullmatch(r"[a-f0-9]{32}", request_id):
+                    raise RuntimeErrorMessage("保存操作编号无效。")
+                receipt = self.operation_receipts.get(request_id)
+                if receipt is not None:
+                    if receipt["command"] != command:
+                        raise RuntimeErrorMessage("保存操作编号已用于其他请求。")
+                    return copy.deepcopy(receipt["result"])
             old, was_running = copy.deepcopy(self.data), self.running
             applied = False
             selection = None
@@ -414,7 +424,12 @@ class Service:
                     self._apply(result.pop("running", self.running))
                 if persist:
                     self.storage.save(self.data)
-                return {"state": self.state(), **result}
+                response = {"state": self.state(), **result}
+                if request_id is not None:
+                    self.operation_receipts[request_id] = {"command": copy.deepcopy(command), "result": copy.deepcopy(response)}
+                    if len(self.operation_receipts) > 128:
+                        del self.operation_receipts[next(iter(self.operation_receipts))]
+                return response
             except Exception:
                 self.data = old
                 if selection and selection["previous"]:
@@ -436,6 +451,19 @@ class Service:
         action = c["action"]
         if action.startswith("profile."):
             return self._profile_command(c, downloaded=downloaded)
+        if action == "core.configure":
+            patch, expected = c.get("patch"), c.get("expected")
+            if (not isinstance(patch, dict) or not patch or set(patch) - CONFIG_KEYS
+                    or not isinstance(expected, dict) or set(expected) != set(patch)):
+                raise RuntimeErrorMessage("核心设置变更或原始值无效。")
+            _, current = self._configuration()
+            if any(current.get(key) != expected[key] for key in patch):
+                raise RuntimeErrorMessage("正在编辑的设置已被其他界面修改，请重新载入。")
+            validate_core_config({**current, **patch})
+            _, document = self._document("core", None)
+            value = merge(json.loads(document["text"]), patch)
+            return self._workspace({"action": "workspace.write", "section": "core",
+                                    "revision": document["revision"], "text": encode_json(value)})
         if action == "network.save":
             if c.get("expected") != self.data["network"]:
                 raise RuntimeErrorMessage("网络设置已被修改，请重新载入。")
@@ -962,6 +990,14 @@ class Service:
                 with self.lock:
                     if not self.closing and next((p for p in self.data["profiles"] if p["id"] == identity), None) == profile:
                         self.update_errors[identity] = str(error)
+
+    def _configuration(self):
+        status, data = self.core.request("GET", "/configs")
+        value = json.loads(data)
+        value.update({target: self.data["network"][field] for field, target in NETWORK_KEYS.items()})
+        for key in ("port", "socks-port"):
+            value[key] = self.data["workspace"].get("core", {}).get(key, 0)
+        return status, value
 
     def relay(self, method, path, body=None):
         config_overrides = None

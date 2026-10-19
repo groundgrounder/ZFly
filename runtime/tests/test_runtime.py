@@ -1,6 +1,7 @@
 """Offline regressions: no real sockets, cores or host proxy mutations."""
 import base64
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from email.message import Message
 import errno
 import io
@@ -9,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 import urllib.request
@@ -95,6 +97,78 @@ class RuntimeTests(unittest.TestCase):
         doc = self.service.perform({"action": "catalog.read", **scope})["document"]
         result = self.service.perform({"action": "catalog.save", **scope, "text": json.dumps(value), "revision": doc["revision"]})
         return next(x["id"] for x in result["items"] if x["label"] == value["name"])
+
+    def test_core_configure_rejects_an_intervening_write(self):
+        self.create()
+        expected = copy.deepcopy(self.service.data["network"])
+        self.service.perform({"action": "network.save", "expected": expected,
+                              "network": {**expected, "mode": "direct"}})
+        applies = len(self.core.applies)
+        with self.assertRaisesRegex(RuntimeErrorMessage, "其他界面修改"):
+            self.service.perform({"action": "core.configure", "patch": {"mode": "global"},
+                                  "expected": {"mode": "rule"}})
+        self.assertEqual(self.storage.saved["network"]["mode"], "direct")
+        self.assertEqual(len(self.core.applies), applies)
+
+    def test_core_configure_requires_an_expected_value_for_every_change(self):
+        with self.assertRaisesRegex(RuntimeErrorMessage, "原始值"):
+            self.service.perform({"action": "core.configure", "patch": {"mode": "global", "ipv6": True},
+                                  "expected": {"mode": "rule"}})
+
+    def test_save_receipt_survives_retries_without_overwriting_later_edits(self):
+        command = {"action": "core.configure", "patch": {"mode": "global"},
+                   "expected": {"mode": "rule"}, "requestID": "a" * 32}
+        receipt = self.service.perform(command)
+        self.assertEqual(self.storage.saved["network"]["mode"], "global")
+        expected = copy.deepcopy(self.service.data["network"])
+        self.service.perform({"action": "network.save", "expected": expected,
+                              "network": {**expected, "mode": "direct"}})
+        applies = len(self.core.applies)
+        self.assertEqual(self.service.perform(command), receipt)
+        self.assertEqual(self.storage.saved["network"]["mode"], "direct")
+        self.assertEqual(len(self.core.applies), applies)
+        with self.assertRaisesRegex(RuntimeErrorMessage, "其他请求"):
+            self.service.perform({**command, "patch": {"mode": "rule"}})
+
+    def test_failed_core_configure_rolls_back_and_can_be_retried(self):
+        self.create()
+        before = copy.deepcopy(self.storage.saved)
+        command = {"action": "core.configure", "patch": {"mode": "global"},
+                   "expected": {"mode": "rule"}, "requestID": "b" * 32}
+        self.core.fail_next = True
+        with self.assertRaises(RuntimeErrorMessage):
+            self.service.perform(command)
+        self.assertEqual(self.storage.saved, before)
+        self.assertEqual(self.service.data, before)
+        self.service.perform(command)
+        self.assertEqual(self.storage.saved["network"]["mode"], "global")
+
+    def test_delays_are_concurrent_and_do_not_block_state_or_mutations(self):
+        release, started = threading.Event(), threading.Event()
+        guard = threading.Lock()
+        active = 0
+        def request(_method, _path, _data=None):
+            nonlocal active
+            with guard:
+                active += 1
+                if active == 4:
+                    started.set()
+            if not release.wait(3):
+                raise AssertionError("delay test was not released")
+            return 200, b'{"delay":42}'
+        with patch.object(self.core, "request", side_effect=request), ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(self.service.relay, "GET", f"/proxies/{name}/delay") for name in "abcd"]
+            try:
+                self.assertTrue(started.wait(2), "delay requests were serialized")
+                self.assertFalse(self.service.state()["running"])
+                expected = copy.deepcopy(self.service.data["network"])
+                self.service.perform({"action": "network.save", "expected": expected,
+                                      "network": {**expected, "mode": "direct"}})
+                self.assertEqual(self.storage.saved["network"]["mode"], "direct")
+            finally:
+                release.set()
+            for future in futures:
+                self.assertEqual(json.loads(future.result(timeout=2)[1])["delay"], 42)
 
     def test_first_import_is_selected_but_never_started(self):
         identity = self.create()

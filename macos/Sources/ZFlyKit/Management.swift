@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ManagedProfile: Codable, Identifiable, Sendable {
+public struct ManagedProfile: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public var label: String
     public let type: String
@@ -47,7 +47,7 @@ public struct ManagedNetwork: Codable, Equatable, Sendable {
     public var logLevel: String
 }
 
-public struct ManagedState: Decodable, Sendable {
+public struct ManagedState: Decodable, Equatable, Sendable {
     public let apiVersion: Int
     public var currentProfileID: String?
     public var running: Bool

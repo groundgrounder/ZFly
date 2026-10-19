@@ -1,6 +1,6 @@
 import Foundation
 
-public struct VersionInfo: Decodable, Sendable {
+public struct VersionInfo: Decodable, Equatable, Sendable {
     public let version: String
 }
 
@@ -105,7 +105,7 @@ public struct CoreConfig: Codable, Equatable, Sendable {
     }
 }
 
-public struct ProxyInfo: Decodable, Sendable {
+public struct ProxyInfo: Decodable, Equatable, Sendable {
     public let type: String
     public let all: [String]?
     public var now: String?
@@ -114,11 +114,11 @@ public struct ProxyInfo: Decodable, Sendable {
     public var lastDelay: Int? { history?.last?.delay }
 }
 
-public struct DelayInfo: Decodable, Sendable {
+public struct DelayInfo: Decodable, Equatable, Sendable {
     public let delay: Int
 }
 
-public struct ProxyResponse: Decodable, Sendable {
+public struct ProxyResponse: Decodable, Equatable, Sendable {
     public var proxies: [String: ProxyInfo]
 
     public var groupNames: [String] {
@@ -126,7 +126,7 @@ public struct ProxyResponse: Decodable, Sendable {
     }
 }
 
-public struct ConnectionMetadata: Decodable, Sendable {
+public struct ConnectionMetadata: Decodable, Equatable, Sendable {
     public let host: String?
     public let destinationIP: String?
     public let destinationPort: String?
@@ -134,7 +134,7 @@ public struct ConnectionMetadata: Decodable, Sendable {
     public let process: String?
 }
 
-public struct ConnectionInfo: Decodable, Identifiable, Sendable {
+public struct ConnectionInfo: Decodable, Equatable, Identifiable, Sendable {
     public let id: String
     public let metadata: ConnectionMetadata?
     public let upload: Int64?
@@ -149,7 +149,7 @@ public struct ConnectionInfo: Decodable, Identifiable, Sendable {
     }
 }
 
-public struct ConnectionsSnapshot: Decodable, Sendable {
+public struct ConnectionsSnapshot: Decodable, Equatable, Sendable {
     public let downloadTotal: Int64?
     public let uploadTotal: Int64?
     public let memory: Int64?

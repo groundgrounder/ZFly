@@ -21,7 +21,7 @@ MAX_FRAME = 64 * 1024 * 1024
 
 
 class Core:
-    def __init__(self, executable, home, secret, kind="ipc"):
+    def __init__(self, executable, home, secret, kind="ipc", *, stop_event=None):
         self.executable = str(Path(executable).resolve())
         self.home = Path(home)
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -37,6 +37,7 @@ class Core:
         self.last_config = None
         self.reader = None
         self.event_lock = threading.Lock()
+        self.stop_event = stop_event or threading.Event()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     @property
@@ -45,6 +46,7 @@ class Core:
 
     def start(self):
         self.error = None
+        self._check_stopping()
         if not Path(self.executable).is_file():
             raise RuntimeErrorMessage("应用缺少内置代理核心，请重新构建或安装完整的 ZFly。")
         # Select a private controller port. Never attach to an existing core.
@@ -57,6 +59,9 @@ class Core:
             self.process = subprocess.Popen([self.executable, "-d", str(self.home), "-f", str(self.home / "config.yaml")],
                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for _ in range(100):
+                if self.stop_event.is_set():
+                    self.close()
+                    self._check_stopping()
                 if not self.alive:
                     self.close()
                     raise RuntimeErrorMessage("ZFly 内置核心启动失败。")
@@ -73,12 +78,22 @@ class Core:
         with socket.socket(socket.AF_UNIX) as listener:
             listener.bind(socket_path)
             listener.listen(1)
-            listener.settimeout(10)
+            listener.settimeout(0.1)
             self.process = subprocess.Popen([self.executable, socket_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
-                self.connection, _ = listener.accept()
-            except (TimeoutError, OSError):
+                deadline = time.monotonic() + 10
+                while True:
+                    self._check_stopping()
+                    try:
+                        self.connection, _ = listener.accept()
+                        break
+                    except TimeoutError:
+                        if time.monotonic() >= deadline:
+                            raise
+            except (RuntimeErrorMessage, OSError) as error:
                 self.close()
+                if isinstance(error, RuntimeErrorMessage):
+                    raise
                 raise RuntimeErrorMessage("ZFly 内置核心没有建立连接，核心版本可能不兼容。") from None
         self.reader = threading.Thread(target=self._read, args=(self.connection,), daemon=True, name="zfly-core-ipc")
         self.reader.start()
@@ -86,7 +101,8 @@ class Core:
             if self.call("initClash", {"home-dir": str(self.home), "version": 0}) is not True:
                 raise RuntimeErrorMessage("ZFly 核心初始化失败。")
             self.call("startLog")
-            self.apply(self.base_config())
+            # Service.start/restart applies the saved configuration immediately
+            # after this handshake. Avoid loading a throwaway empty config first.
         except RuntimeErrorMessage:
             self.close()
             raise
@@ -154,7 +170,12 @@ class Core:
                     for target in self.pending.values():
                         target.put({"error": {"message": self.error}})
 
+    def _check_stopping(self):
+        if self.stop_event.is_set():
+            raise RuntimeErrorMessage("ZFly 正在退出，已取消等待核心响应。")
+
     def call(self, method, arguments=None, timeout=60):
+        self._check_stopping()
         if not self.alive or not self.connection:
             raise RuntimeErrorMessage(self.error or "ZFly 核心尚未启动。")
         identity = uuid.uuid4().hex
@@ -165,7 +186,17 @@ class Core:
             payload = json.dumps({"id": identity, "method": method, "arguments": arguments}).encode()
             with self.send_lock:
                 self.connection.sendall(struct.pack("<I", len(payload)) + payload)
-            result = target.get(timeout=timeout)
+            deadline = time.monotonic() + timeout
+            while True:
+                self._check_stopping()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise queue.Empty()
+                try:
+                    result = target.get(timeout=min(0.1, remaining))
+                    break
+                except queue.Empty:
+                    continue
             if result.get("error"):
                 raise RuntimeErrorMessage(str(result["error"].get("message", "核心操作失败。")))
             value = result.get("result")
@@ -244,6 +275,9 @@ class Core:
 
     def close(self):
         connection, self.connection = self.connection, None
+        with self.pending_lock:
+            for target in self.pending.values():
+                target.put({"error": {"message": "ZFly 核心正在停止。"}})
         if connection:
             with contextlib.suppress(OSError):
                 connection.shutdown(socket.SHUT_RDWR)
@@ -252,15 +286,15 @@ class Core:
             self.reader.join(timeout=2)
             self.reader = None
         if self.process:
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+            if self.process.poll() is None:
                 self.process.terminate()
                 try:
                     self.process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     self.process.kill()
                     self.process.wait()
+            else:
+                self.process.wait()
             self.process = None
         if hasattr(self, "socket_directory"):
             self.socket_directory.cleanup()

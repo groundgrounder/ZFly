@@ -6,6 +6,7 @@ final class NativeRuntime {
     static let shared = NativeRuntime()
     private(set) var process: Process?
     private var sessionDirectory: URL?
+    private var shutdownTask: Task<Void, Never>?
 
     struct Connection: Decodable {
         let endpoint: String
@@ -25,7 +26,7 @@ final class NativeRuntime {
             if let sessionDirectory { try? FileManager.default.removeItem(at: sessionDirectory) }
             sessionDirectory = nil
         }
-        guard process == nil else { throw failure("ZFly 运行时正在启动，请稍候。") }
+        guard process == nil, shutdownTask == nil else { throw failure("ZFly 运行时正在启动，请稍候。") }
         guard let resources = Bundle.main.resourceURL else { throw failure("应用资源目录不存在。") }
         let python = resources.appendingPathComponent("python/bin/python3")
         let core = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/ZFlyCore")
@@ -80,19 +81,30 @@ final class NativeRuntime {
     }
 
     func stop() async {
+        if let shutdownTask {
+            await shutdownTask.value
+            return
+        }
         guard let child = process else { return }
-        if child.isRunning {
-            child.terminate()
-            for _ in 0..<600 {
-                if !child.isRunning { break }
-                try? await Task.sleep(for: .milliseconds(100))
+        // Cleanup must survive cancellation of the startup/polling task. Share it
+        // with the application delegate if quitting overlaps runtime startup.
+        let task = Task {
+            if child.isRunning {
+                child.terminate()
+                for _ in 0..<600 {
+                    if !child.isRunning { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            if !child.isRunning {
+                process = nil
+                if let sessionDirectory { try? FileManager.default.removeItem(at: sessionDirectory) }
+                sessionDirectory = nil
             }
         }
-        if !child.isRunning {
-            process = nil
-            if let sessionDirectory { try? FileManager.default.removeItem(at: sessionDirectory) }
-            sessionDirectory = nil
-        }
+        shutdownTask = task
+        await task.value
+        shutdownTask = nil
     }
 
     private func failure(_ message: String) -> NSError {
@@ -102,6 +114,7 @@ final class NativeRuntime {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var prepareForTermination: (() -> Void)?
     private var terminating = false
     private var suppressInitialWindow = false
     private let initializedWindows = NSHashTable<NSWindow>.weakObjects()
@@ -190,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        prepareForTermination?()
         guard NativeRuntime.shared.process != nil else { return .terminateNow }
         guard !terminating else { return .terminateLater }
         terminating = true

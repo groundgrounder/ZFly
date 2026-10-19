@@ -45,7 +45,7 @@ private final class LoginItemController: ObservableObject {
 }
 
 struct StartupSettingsView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @AppStorage("startup.startHidden") private var startHidden = false
     @StateObject private var loginItem = LoginItemController()
 

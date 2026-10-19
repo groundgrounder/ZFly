@@ -8,7 +8,7 @@ private struct CatalogSelection: Identifiable {
 }
 
 struct CatalogView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     var active = true
     @State private var kind: CatalogKind = .proxies
     @State private var profileID = ""
@@ -130,7 +130,7 @@ struct CatalogView: View {
 }
 
 private struct CatalogEditor: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     let selection: CatalogSelection
     let changed: () -> Void

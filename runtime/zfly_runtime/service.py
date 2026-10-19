@@ -171,9 +171,8 @@ class Service:
         self.system_proxy.disable()  # Recover a lease left by a previous crash.
         self.core.start()
         try:
-            self._apply(False)
-            if self.data["workspace"].get("app", {}).get("autoRun") and self.data["currentProfileID"]:
-                self._apply(True)
+            auto_run = bool(self.data["workspace"].get("app", {}).get("autoRun") and self.data["currentProfileID"])
+            self._apply(auto_run)
         except RuntimeErrorMessage as error:
             # Keep management available so a bad saved profile can be repaired.
             self.core.apply(self.core.base_config())
@@ -194,7 +193,7 @@ class Service:
                 self.storage.close()
 
     def check_health(self):
-        # Downloads may hold the transaction lock. Never block parent-exit detection.
+        # User operations may hold the transaction lock. Never block parent-exit detection.
         if not self.lock.acquire(blocking=False):
             return
         try:
@@ -255,13 +254,16 @@ class Service:
             # Exception strings can contain credential-bearing subscription URLs.
             raise RuntimeErrorMessage("无法下载配置，请检查网络、订阅地址和 HTTPS 证书。") from None
 
-    def _download(self, profile):
+    def _fetch_profile(self, profile):
         headers = {}
         if profile.get("etag"):
             headers["If-None-Match"] = profile["etag"]
         if profile.get("lastModified"):
             headers["If-Modified-Since"] = profile["lastModified"]
-        body, response, status = self.fetcher(profile["url"], headers)
+        return self.fetcher(profile["url"], headers)
+
+    def _download(self, profile, downloaded=None):
+        body, response, status = downloaded if downloaded is not None else self._fetch_profile(profile)
         profile["updated"] = now()
         if status == 304:
             if not profile.get("content"):
@@ -393,7 +395,7 @@ class Service:
         self.proxy_restore_pending = False
         self.last_error = None
 
-    def perform(self, command):
+    def perform(self, command, *, downloaded=None):
         if not isinstance(command, dict) or not isinstance(command.get("action"), str):
             raise RuntimeErrorMessage("操作格式无效。")
         with self.lock:
@@ -403,7 +405,7 @@ class Service:
             applied = False
             selection = None
             try:
-                result, reapply, persist = self._command(command)
+                result, reapply, persist = self._command(command, downloaded=downloaded)
                 selection = result.pop("selection", None)
                 if selection:
                     self.core.request("PUT", "/proxies/" + urllib.parse.quote(selection["group"], safe=""), json.dumps({"name": selection["proxy"]}).encode())
@@ -430,10 +432,10 @@ class Service:
                         self.proxy_signature = None
                 raise
 
-    def _command(self, c):
+    def _command(self, c, *, downloaded=None):
         action = c["action"]
         if action.startswith("profile."):
-            return self._profile_command(c)
+            return self._profile_command(c, downloaded=downloaded)
         if action == "network.save":
             if c.get("expected") != self.data["network"]:
                 raise RuntimeErrorMessage("网络设置已被修改，请重新载入。")
@@ -462,7 +464,7 @@ class Service:
             return self._tool(c)
         raise RuntimeErrorMessage("不支持的操作。")
 
-    def _profile_command(self, c):
+    def _profile_command(self, c, *, downloaded=None):
         action = c["action"]
         if action in ("profile.add", "profile.import", "profile.create"):
             validate_profile_command(c, action)
@@ -496,7 +498,7 @@ class Service:
         if action == "profile.update":
             if p["type"] != "url":
                 raise RuntimeErrorMessage("只有订阅配置支持在线更新。")
-            self._download(p)
+            self._download(p, downloaded=downloaded)
             self.update_errors.pop(p["id"], None)
             return {"message": "订阅已更新。"}, current, True
         if action == "profile.edit":
@@ -928,6 +930,8 @@ class Service:
 
     def update_due(self):
         with self.lock:
+            if self.closing:
+                return
             due = []
             for p in self.data["profiles"]:
                 if p["type"] == "url" and p["autoUpdate"]:
@@ -936,15 +940,34 @@ class Service:
                     except (KeyError, ValueError):
                         last = 0
                     if time.time() - last >= p["updateHours"] * 3600:
-                        due.append(p["id"])
-        for identity in due:
+                        due.append(copy.deepcopy(p))
+        for profile in due:
+            identity = profile["id"]
             try:
-                self.perform({"action": "profile.update", "id": identity})
+                # A slow subscription server must not hold up status reads or exit.
+                # Keep validation, core apply, persistence and rollback in the transaction.
+                with self.lock:
+                    if self.closing:
+                        return
+                    if next((p for p in self.data["profiles"] if p["id"] == identity), None) != profile:
+                        continue
+                downloaded = self._fetch_profile(profile)
+                with self.lock:
+                    if self.closing:
+                        return
+                    if next((p for p in self.data["profiles"] if p["id"] == identity), None) != profile:
+                        continue
+                    self.perform({"action": "profile.update", "id": identity}, downloaded=downloaded)
             except RuntimeErrorMessage as error:
-                self.update_errors[identity] = str(error)
+                with self.lock:
+                    if not self.closing and next((p for p in self.data["profiles"] if p["id"] == identity), None) == profile:
+                        self.update_errors[identity] = str(error)
 
     def relay(self, method, path, body=None):
+        config_overrides = None
         with self.lock:
+            if self.closing:
+                raise RuntimeErrorMessage("ZFly 正在退出，请稍候。")
             route = urllib.parse.urlsplit(path).path
             allowed = (method == "GET" and (route in ("/version", "/configs", "/proxies", "/connections", "/rules", "/dns/query", "/memory", "/providers/proxies", "/providers/rules")
                        or route.startswith(("/proxies/", "/providers/proxies/", "/providers/rules/"))))
@@ -958,12 +981,9 @@ class Service:
                     raise RuntimeErrorMessage("节点选择格式无效。") from None
                 return 204, b""
             if method == "GET" and path == "/configs":
-                status, data = self.core.request(method, path)
-                value = json.loads(data)
-                value.update({target: self.data["network"][field] for field, target in NETWORK_KEYS.items()})
+                config_overrides = {target: self.data["network"][field] for field, target in NETWORK_KEYS.items()}
                 for key in ("port", "socks-port"):
-                    value[key] = self.data["workspace"].get("core", {}).get(key, 0)
-                return status, encode_json(value).encode()
+                    config_overrides[key] = self.data["workspace"].get("core", {}).get(key, 0)
             # All persistent core settings go through the same transaction as native settings.
             if path == "/configs" and method == "PATCH":
                 try:
@@ -983,4 +1003,14 @@ class Service:
                 preferences = self.data["workspace"].get("app", DEFAULTS["app"])
                 query["url"] = [preferences.get("testUrl", DEFAULTS["app"]["testUrl"])]
                 path = route + "?" + urllib.parse.urlencode(query, doseq=True)
-            return self.core.request(method, path, body)
+            if method != "GET":
+                return self.core.request(method, path, body)
+        # A delayed status/DNS/latency response must not hold the mutation lock
+        # and prevent proxy restoration or core termination. Snapshot overrides
+        # above; reads never commit persistent state after the request completes.
+        status, data = self.core.request(method, path, body)
+        if config_overrides is not None:
+            value = json.loads(data)
+            value.update(config_overrides)
+            data = encode_json(value).encode()
+        return status, data

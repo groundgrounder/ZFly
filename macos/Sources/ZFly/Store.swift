@@ -1,61 +1,68 @@
 import Foundation
+import Observation
 import SwiftUI
 import ZFlyKit
 
-struct TrafficSample: Identifiable {
+struct TrafficSample: Equatable, Identifiable {
     let id = UUID()
     let download: Double
     let upload: Double
 }
 
-@MainActor
-final class Store: ObservableObject {
+@MainActor @Observable
+final class Store {
     let preview: Bool
-    @Published private(set) var snapshot: Snapshot?
-    @Published private(set) var busy = false
-    @Published private(set) var refreshingStatus = false
-    @Published private(set) var connected = false
-    @Published private(set) var status = "正在启动 ZFly…"
-    @Published private(set) var endpoint = "ZFly 内置核心"
-    @Published private(set) var dataDirectory = ""
-    @Published private(set) var updated: Date?
-    @Published private(set) var delays: [String: Int] = [:]
-    @Published var actionError: String?
-    @Published private(set) var management: ManagedState?
-    @Published private(set) var managementBusy = false
-    @Published private(set) var managementStatus = "正在启动本地运行时…"
-    @Published private(set) var managementEndpoint = ""
-    @Published private(set) var sessionID = 0
-    @Published private(set) var traffic: [TrafficSample] = []
-    @Published private(set) var starting = false
-    private var previousTraffic: (date: Date, download: Int64, upload: Int64)?
+    private(set) var snapshot: CoreState?
+    private(set) var busy = false
+    private(set) var refreshingStatus = false
+    private(set) var connected = false
+    private(set) var status = "正在启动 ZFly…"
+    private(set) var endpoint = "ZFly 内置核心"
+    private(set) var dataDirectory = ""
+    private(set) var updated: Date?
+    private(set) var delays: [String: Int] = [:]
+    var actionError: String?
+    private(set) var management: ManagedState?
+    private(set) var managementBusy = false
+    private(set) var managementStatus = "正在启动本地运行时…"
+    private(set) var managementEndpoint = ""
+    private(set) var sessionID = 0
+    private(set) var traffic: [TrafficSample] = []
+    private(set) var starting = false
+    @ObservationIgnored private var previousTraffic: (date: Date, download: Int64, upload: Int64)?
     var downloadRate: Int64 { Int64(traffic.last?.download ?? 0) }
     var uploadRate: Int64 { Int64(traffic.last?.upload ?? 0) }
-    private var controller: Controller?
-    private var managementClient: ManagementClient?
-    private var previewFiles: [String: ManagedFile] = [:]
-    private var previewDocuments: [String: ManagedDocument] = [:]
-    private var previewCatalog = PreviewCatalog()
-    private var generation = 0
-    private var coreRevision = 0
-    private var managementRevision = 0
-    private var managementRefreshing = false
-    private var refreshing = false
-    private var polling = false
-    private var pollingTask: Task<Void, Never>?
+    @ObservationIgnored private var controller: Controller?
+    @ObservationIgnored private var managementClient: ManagementClient?
+    @ObservationIgnored private var previewFiles: [String: ManagedFile] = [:]
+    @ObservationIgnored private var previewDocuments: [String: ManagedDocument] = [:]
+    @ObservationIgnored private var previewCatalog = PreviewCatalog()
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var coreRevision = 0
+    @ObservationIgnored private var managementRevision = 0
+    @ObservationIgnored private var managementRefreshing = false
+    @ObservationIgnored private var refreshing = false
+    @ObservationIgnored private var polling = false
+    @ObservationIgnored private var pollingTask: Task<Void, Never>?
 
     var isBusy: Bool { starting || busy || managementBusy }
 
     func startPolling() {
-        guard pollingTask == nil else { return }
+        guard !preview, pollingTask == nil else { return }
         pollingTask = Task { await poll() }
+    }
+
+    func stopPolling() {
+        generation += 1
+        pollingTask?.cancel()
+        pollingTask = nil
     }
 
     init(preview: Bool) {
         self.preview = preview
         if preview {
             do {
-                snapshot = try Snapshot.preview()
+                snapshot = CoreState(try Snapshot.preview())
                 management = try ManagedState.preview()
                 managementStatus = "演示模式"
                 connected = true
@@ -99,11 +106,13 @@ final class Store: ObservableObject {
                 return
             }
             let connection = try await NativeRuntime.shared.start()
+            try Task.checkCancellation()
             dataDirectory = connection.dataDirectory
             try connect(endpoint: connection.endpoint, secret: connection.secret, managementEndpoint: connection.endpoint)
             await refreshManagement()
             await refresh()
         } catch {
+            guard !Task.isCancelled else { return }
             status = error.localizedDescription
             managementStatus = status
         }
@@ -133,30 +142,42 @@ final class Store: ObservableObject {
     }
 
     func poll() async {
-        guard !polling else { return }
+        guard !preview, !polling else { return }
         polling = true
         defer { polling = false }
         await startRuntime()
+        var cycle = snapshot == nil ? 0 : 1
         while !Task.isCancelled {
-            await refresh()
-            await refreshManagement()
+            // Sample live counters every two seconds; reload stable metadata every ten seconds.
+            // Explicit refreshes and completed actions still request a full snapshot immediately.
+            let full = cycle == 0 || snapshot == nil
+            await refresh(full: full)
+            if full { await refreshManagement() }
+            cycle = (cycle + 1) % 5
             do { try await Task.sleep(for: .seconds(2)) }
             catch { return }
         }
     }
 
-    func refresh() async {
+    func refresh(full: Bool = true) async {
         guard !preview, !refreshing, !busy, !managementBusy, let controller else { return }
         refreshing = true
         let revision = generation
         let operation = coreRevision
         defer { refreshing = false }
         do {
-            let next = try await controller.snapshot()
-            guard revision == generation, operation == coreRevision, !Task.isCancelled else { return }
-            snapshot = next
-            recordTraffic(next)
-            connected = true
+            if full || snapshot == nil {
+                let next = try await controller.snapshot()
+                guard revision == generation, operation == coreRevision, !Task.isCancelled else { return }
+                applySnapshot(next)
+                recordTraffic(next.connections)
+            } else {
+                let next = try await controller.connections()
+                guard revision == generation, operation == coreRevision, !Task.isCancelled else { return }
+                snapshot?.applyConnections(next)
+                recordTraffic(next)
+            }
+            if !connected { connected = true }
             updateConnectedStatus()
             updated = Date()
         } catch {
@@ -164,6 +185,11 @@ final class Store: ObservableObject {
             connected = false
             status = "连接失败：" + error.localizedDescription
         }
+    }
+
+    private func applySnapshot(_ next: Snapshot) {
+        if let snapshot { snapshot.apply(next) }
+        else { snapshot = CoreState(next) }
     }
 
     func refreshStatus() async {
@@ -181,9 +207,9 @@ final class Store: ObservableObject {
         if status != next { status = next }
     }
 
-    private func recordTraffic(_ next: Snapshot) {
+    private func recordTraffic(_ next: ConnectionsSnapshot) {
         let date = Date()
-        let down = next.connections.downloadTotal ?? 0, up = next.connections.uploadTotal ?? 0
+        let down = next.downloadTotal ?? 0, up = next.uploadTotal ?? 0
         if let previous = previousTraffic {
             let elapsed = date.timeIntervalSince(previous.date)
             if elapsed > 0 {
@@ -219,8 +245,8 @@ final class Store: ObservableObject {
         do {
             let state = try await client.snapshot()
             guard revision == generation, operation == managementRevision, !Task.isCancelled else { return }
-            management = state
-            managementStatus = "ZFly 运行时已就绪"
+            if management != state { management = state }
+            if managementStatus != "ZFly 运行时已就绪" { managementStatus = "ZFly 运行时已就绪" }
             updateConnectedStatus()
         } catch {
             guard revision == generation, operation == managementRevision, !Task.isCancelled else { return }
@@ -520,12 +546,12 @@ final class Store: ObservableObject {
         try current.merging(patch).validate()
         do { try await controller.configure(patch) }
         catch {
-            if let latest = try? await controller.snapshot(), revision == generation { snapshot = latest }
+            if let latest = try? await controller.snapshot(), revision == generation { applySnapshot(latest) }
             throw error
         }
         let latest = try await controller.snapshot()
         guard revision == generation else { throw CancellationError() }
-        snapshot = latest
+        applySnapshot(latest)
         updated = Date()
         guard patch.matches(latest.configs) else {
             throw ControllerError.invalidConfig("核心未应用全部设置，请重新载入检查端口占用。")
@@ -545,9 +571,4 @@ final class Store: ObservableObject {
         busy = false
         if revision == generation { await refresh() }
     }
-}
-
-func bytes(_ value: Int64?) -> String {
-    guard let value, value != 0 else { return "0 KB" }
-    return ByteCountFormatter.string(fromByteCount: value, countStyle: .binary)
 }

@@ -2,7 +2,7 @@ import SwiftUI
 import ZFlyKit
 
 struct ProxiesView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @State private var search = PreviewOptions.value("--preview-query") ?? ""
 
     private var names: [String] { store.snapshot?.proxies.groupNames ?? [] }
@@ -63,7 +63,7 @@ struct ProxiesView: View {
 }
 
 private struct ProxyCard: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let name: String
     let groupName: String
@@ -118,15 +118,19 @@ private struct ProxyCard: View {
 }
 
 struct ConnectionsView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
+    let active: Bool
     @State private var search = PreviewOptions.value("--preview-query") ?? ""
-    private var all: [ConnectionInfo] { store.snapshot?.connections.items ?? [] }
+    @State private var current: ConnectionsSnapshot?
+    private var all: [ConnectionInfo] { current?.items ?? [] }
     private var connections: [ConnectionInfo] {
         all.filter { search.isEmpty || $0.destination.localizedCaseInsensitiveContains(search)
             || ($0.metadata?.process ?? "").localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
+        let visibleConnections = connections
+        let lastID = visibleConnections.last?.id
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
             PageHeader("连接", subtitle: "查看实时请求、匹配规则与流量。") {
                 StatusBadge(title: "\(all.count) 条活动连接", color: ZFlyPalette.tint)
@@ -144,27 +148,31 @@ struct ConnectionsView: View {
                 Divider().opacity(0.5)
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(connections) { connection in
+                        ForEach(visibleConnections) { connection in
                             ConnectionRow(connection: connection).padding(.horizontal, ZFlyMetrics.panelPadding)
-                            if connection.id != connections.last?.id {
+                            if connection.id != lastID {
                                 Divider().opacity(0.5).padding(.horizontal, ZFlyMetrics.panelPadding)
                             }
                         }
                     }
                 }
                 .overlay {
-                    if connections.isEmpty {
+                    if visibleConnections.isEmpty {
                         ContentUnavailableView(search.isEmpty ? "暂无连接" : "没有匹配的连接", systemImage: search.isEmpty ? "link" : "magnifyingglass",
                                                description: Text(search.isEmpty ? "核心的活动连接会显示在这里。" : "试试其他名称，或清除搜索条件。"))
                     }
                 }
             }.modifier(SurfacePanel())
         }.padding(ZFlyMetrics.pagePadding)
+        .onChange(of: active ? store.snapshot?.connections : nil, initial: true) { _, value in
+            // Preserve the hidden page's rows and scroll position without subscribing to live traffic.
+            if active { current = value }
+        }
     }
 }
 
 private struct ConnectionRow: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     let connection: ConnectionInfo
 
     var body: some View {

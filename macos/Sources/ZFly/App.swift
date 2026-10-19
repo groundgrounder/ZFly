@@ -5,20 +5,23 @@ import ZFlyKit
 @main
 struct ZFlyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = Store(preview: CommandLine.arguments.contains("--safe-mode"))
+    @State private var store = Store(preview: CommandLine.arguments.contains("--safe-mode"))
     @AppStorage("appearance.scheme") private var scheme = "system"
     @AppStorage("appearance.language") private var language = AppLanguage.system.rawValue
 
     var body: some Scene {
         Window("ZFly", id: "main") {
-            MainView().environmentObject(store)
+            MainView().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
                 .frame(minWidth: 900, minHeight: 640)
                 .tint(ZFlyPalette.tint)
                 .onChange(of: scheme, initial: true) { _, value in
                     AppAppearance.apply(value, to: NSApplication.shared)
                 }
-                .onAppear { store.startPolling() }
+                .onAppear {
+                    appDelegate.prepareForTermination = { store.stopPolling() }
+                    store.startPolling()
+                }
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unifiedCompact)
@@ -32,11 +35,11 @@ struct ZFlyApp: App {
             }
         }
         MenuBarExtra("ZFly", systemImage: store.management?.running == true ? "paperplane.fill" : "paperplane") {
-            StatusMenu().environmentObject(store)
+            StatusMenu().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
         }
         Settings {
-            AppSettingsView().environmentObject(store)
+            AppSettingsView().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
                 .id(store.sessionID)
                 .frame(width: 720, height: 720)
@@ -108,7 +111,7 @@ private struct SidebarButton: View {
 }
 
 private struct MainView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = Page.initial
     @State private var visited: Set<Page> = [Page.initial]
@@ -163,9 +166,10 @@ private struct MainView: View {
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button("侧边栏", systemImage: "sidebar.left") {
+                SidebarToolbarButton {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { sidebar.toggle() }
-                }.help("显示或隐藏侧边栏")
+                }
+                .frame(width: 32, height: 28)
             }
         }
         .sheet(isPresented: $controllerSettings) { ControllerSheet() }
@@ -234,10 +238,10 @@ private struct MainView: View {
 
     @ViewBuilder private func content(for page: Page) -> some View {
         switch page {
-        case .overview: DashboardView(openSubscriptions: { self.page = .profiles })
+        case .overview: DashboardView(active: self.page == .overview, openSubscriptions: { self.page = .profiles })
         case .profiles: ManagementView(network: false)
         case .proxies: ProxiesView()
-        case .connections: ConnectionsView()
+        case .connections: ConnectionsView(active: self.page == .connections)
         case .settings: AppSettingsView()
         case .workspace: WorkspaceView(active: self.page == .workspace)
         case .catalog: CatalogView(active: self.page == .catalog)
@@ -251,7 +255,7 @@ private struct MainView: View {
 }
 
 struct ControllerSheet: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {

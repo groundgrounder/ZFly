@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import ZFlyKit
 
 struct ManagementView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     let network: Bool
     @State private var connection = false
 
@@ -33,7 +33,7 @@ struct ManagementView: View {
 }
 
 private struct ProfileManagement: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.locale) private var locale
     let state: ManagedState
     @State private var adding = false
@@ -255,7 +255,7 @@ private func displayDate(_ value: String, locale: Locale) -> String {
 }
 
 private struct ProfileProperties: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     let profile: ManagedProfile?
     @State private var label: String
@@ -339,7 +339,7 @@ private struct ProfileDocument: Identifiable {
 }
 
 private struct ProfileEditor: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     let document: ProfileDocument
     @State private var text: String
@@ -391,7 +391,7 @@ private struct ProfileEditor: View {
 }
 
 private struct NetworkManagement: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     let state: ManagedState
     @State private var baseline: ManagedNetwork
     @State private var draft: ManagedNetwork

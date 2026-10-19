@@ -9,5 +9,6 @@ let package = Package(
     targets: [
         .target(name: "ZFlyKit", resources: [.copy("Resources/preview.json")]),
         .executableTarget(name: "ZFly", dependencies: ["ZFlyKit"], resources: [.process("Resources")]),
+        .testTarget(name: "ZFlyTests", dependencies: ["ZFly", "ZFlyKit"]),
     ]
 )

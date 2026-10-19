@@ -95,3 +95,13 @@
 | --- | --- |
 | 浅色默认启动 | [overview-light-native.png](../build/macos/ui-review/focus/overview-light-native.png) |
 | 深色工具页 | [tools-dark-native.png](../build/macos/ui-review/focus/tools-dark-native.png) |
+
+## 工具栏按钮焦点框（2026-10-19）
+
+首次修补在 SwiftUI 按钮上设置 `focusEffectDisabled()`，构建与签名通过，但安全预览以 SIGABRT 退出，未生成截图。用户随后反馈蓝框仍在。只读核对确认用户安装的二进制含有该修饰符，不能将问题归因于未安装修改。
+
+现改用 `SidebarToolbarButton` 包装原生 `NSButton`，在控件与 cell 上明确设置 `focusRingType = .none`。侧栏切换继续调用原有带动画的操作；保留图标、随应用语言切换的辅助功能标签与提示文字。其余控件的焦点提示及窗口首次激活处理保持原样。
+
+安全模式独立控件检查通过，使用实际包装组件分别核验中英文标签、提示、图标、点击动作与原生焦点环属性，记录见 `build/macos/native-toolbar-review/control-check.log`。这项检查没有实际应用窗口，不能作为工具栏视觉或完整键盘导航已验证的依据。
+
+最终 Release 构建、7 项 Swift 测试、签名和 34 个打包资源一致性检查通过。新版安全预览仍以 SIGABRT 退出，未生成截图，记录见 `build/macos/native-toolbar-review/preview-results.json`。新包为 `build/macos/ZFly.app`，尚未替换用户安装版本。

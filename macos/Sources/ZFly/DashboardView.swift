@@ -4,8 +4,9 @@ import Charts
 import ZFlyKit
 
 struct DashboardView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let active: Bool
     let openSubscriptions: () -> Void
     private var running: Bool { store.management?.running == true }
     private var connectionTitle: LocalizedStringKey {
@@ -22,7 +23,7 @@ struct DashboardView: View {
                     if store.preview { StatusBadge(title: "演示模式", color: ZFlyPalette.tint) }
                 }
                 connectionCard
-                trafficCard
+                TrafficCard(active: active)
                 quickControls
             }
             .padding(ZFlyMetrics.pagePadding).frame(maxWidth: .infinity)
@@ -71,56 +72,6 @@ struct DashboardView: View {
         }.padding(ZFlyMetrics.panelPadding).modifier(SurfacePanel())
     }
 
-    private var trafficCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 20) {
-                stat("实时下载", value: bytes(store.downloadRate), unit: "/s", detail: Text("总计 ") + Text(bytes(store.snapshot?.connections.downloadTotal)), icon: "arrow.down", color: ZFlyPalette.tint)
-                Divider().frame(height: 56)
-                stat("实时上传", value: bytes(store.uploadRate), unit: "/s", detail: Text("总计 ") + Text(bytes(store.snapshot?.connections.uploadTotal)), icon: "arrow.up", color: ZFlyPalette.upload)
-                Divider().frame(height: 56)
-                stat("活动连接", value: "\(store.snapshot?.connections.items.count ?? 0)", unit: "", detail: Text("内存 ") + Text(bytes(store.snapshot?.connections.memory)), icon: "arrow.left.arrow.right", color: .secondary)
-            }
-            Divider().opacity(0.55)
-            HStack(spacing: 14) {
-                Text("流量趋势").font(.system(size: 12, weight: .semibold))
-                Spacer()
-                legend("下载", color: ZFlyPalette.tint)
-                legend("上传", color: ZFlyPalette.upload)
-                Text("最近 90 秒").font(.system(size: 10)).foregroundStyle(.tertiary)
-            }
-            Chart {
-                ForEach(Array(store.traffic.enumerated()), id: \.element.id) { index, item in
-                    AreaMark(x: .value("时间", index), y: .value("下载", item.download))
-                        .foregroundStyle(LinearGradient(colors: [ZFlyPalette.tint.opacity(0.14), ZFlyPalette.tint.opacity(0.01)], startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.monotone)
-                    LineMark(x: .value("时间", index), y: .value("速度", item.download), series: .value("方向", "下载"))
-                        .foregroundStyle(ZFlyPalette.tint).lineStyle(StrokeStyle(lineWidth: 1.8)).interpolationMethod(.monotone)
-                    LineMark(x: .value("时间", index), y: .value("速度", item.upload), series: .value("方向", "上传"))
-                        .foregroundStyle(ZFlyPalette.upload).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4])).interpolationMethod(.monotone)
-                }
-            }
-            .chartXAxis(.hidden)
-            .chartYScale(domain: .automatic(includesZero: true))
-            .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine().foregroundStyle(.primary.opacity(0.055))
-                    AxisValueLabel {
-                        if let rate = value.as(Double.self) { Text(bytes(Int64(rate)) + "/s").font(.system(size: 9)).foregroundStyle(.secondary) }
-                    }
-                }
-            }
-            .frame(height: 116)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: store.traffic.count)
-            .overlay {
-                if store.traffic.isEmpty {
-                    Text("启动后开始采样").font(.caption).foregroundStyle(.secondary)
-                        .padding(10).background(.regularMaterial, in: Capsule())
-                }
-            }
-            .accessibilityLabel("流量趋势")
-        }.padding(ZFlyMetrics.panelPadding).modifier(SurfacePanel())
-    }
-
     private var quickControls: some View {
         HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 12) {
@@ -145,6 +96,72 @@ struct DashboardView: View {
         }.padding(ZFlyMetrics.panelPadding).modifier(SurfacePanel())
     }
 
+}
+
+private struct TrafficCard: View {
+    @Environment(Store.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let active: Bool
+    // Freeze the hidden chart without removing it, preserving the overview scroll position.
+    @State private var samples: [TrafficSample] = []
+    @State private var counters: ConnectionsSnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 20) {
+                stat("实时下载", value: bytes(Int64(samples.last?.download ?? 0)), unit: "/s", detail: Text("总计 ") + Text(bytes(counters?.downloadTotal)), icon: "arrow.down", color: ZFlyPalette.tint)
+                Divider().frame(height: 56)
+                stat("实时上传", value: bytes(Int64(samples.last?.upload ?? 0)), unit: "/s", detail: Text("总计 ") + Text(bytes(counters?.uploadTotal)), icon: "arrow.up", color: ZFlyPalette.upload)
+                Divider().frame(height: 56)
+                stat("活动连接", value: "\(counters?.items.count ?? 0)", unit: "", detail: Text("内存 ") + Text(bytes(counters?.memory)), icon: "arrow.left.arrow.right", color: .secondary)
+            }
+            Divider().opacity(0.55)
+            HStack(spacing: 14) {
+                Text("流量趋势").font(.system(size: 12, weight: .semibold))
+                Spacer()
+                legend("下载", color: ZFlyPalette.tint)
+                legend("上传", color: ZFlyPalette.upload)
+                Text("最近 90 秒").font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            Chart {
+                ForEach(Array(samples.enumerated()), id: \.element.id) { index, item in
+                    AreaMark(x: .value("时间", index), y: .value("下载", item.download))
+                        .foregroundStyle(LinearGradient(colors: [ZFlyPalette.tint.opacity(0.14), ZFlyPalette.tint.opacity(0.01)], startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.monotone)
+                    LineMark(x: .value("时间", index), y: .value("速度", item.download), series: .value("方向", "下载"))
+                        .foregroundStyle(ZFlyPalette.tint).lineStyle(StrokeStyle(lineWidth: 1.8)).interpolationMethod(.monotone)
+                    LineMark(x: .value("时间", index), y: .value("速度", item.upload), series: .value("方向", "上传"))
+                        .foregroundStyle(ZFlyPalette.upload).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4])).interpolationMethod(.monotone)
+                }
+            }
+            .chartXAxis(.hidden)
+            .chartYScale(domain: .automatic(includesZero: true))
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine().foregroundStyle(.primary.opacity(0.055))
+                    AxisValueLabel {
+                        if let rate = value.as(Double.self) { Text(bytes(Int64(rate)) + "/s").font(.system(size: 9)).foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            .frame(height: 116)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: samples.count)
+            .overlay {
+                if samples.isEmpty {
+                    Text("启动后开始采样").font(.caption).foregroundStyle(.secondary)
+                        .padding(10).background(.regularMaterial, in: Capsule())
+                }
+            }
+            .accessibilityLabel("流量趋势")
+        }.padding(ZFlyMetrics.panelPadding).modifier(SurfacePanel())
+        .onChange(of: active ? store.traffic : nil, initial: true) { _, value in
+            if active { samples = value ?? [] }
+        }
+        .onChange(of: active ? store.snapshot?.connections : nil, initial: true) { _, value in
+            if active { counters = value }
+        }
+    }
+
     private func stat(_ title: LocalizedStringKey, value: String, unit: String, detail: Text, icon: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: icon).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
@@ -164,7 +181,7 @@ struct DashboardView: View {
 }
 
 struct StatusMenu: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Text(LocalizedStringKey(store.preview ? "ZFly · 演示模式" : "ZFly · " + (store.management?.coreStatus ?? "正在启动")))

@@ -9,7 +9,7 @@ private struct WorkspaceDraft {
 }
 
 struct WorkspaceView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     var active = true
     @State private var section: WorkspaceSection = .dns
     @State private var profileID = ""
@@ -213,7 +213,7 @@ private struct JSONPreferencesEditor: View {
 }
 
 struct ToolsView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @State private var domain = "example.com"
     @State private var recordType = "A"
     @State private var provider = ""

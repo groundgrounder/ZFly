@@ -127,6 +127,10 @@ public struct Controller: Sendable {
         return try await Snapshot(version: version, configs: configs, proxies: proxies, connections: connections)
     }
 
+    public func connections() async throws -> ConnectionsSnapshot {
+        try await fetch(["connections"], as: ConnectionsSnapshot.self)
+    }
+
     public func select(group: String, proxy: String) async throws {
         let body = try JSONEncoder().encode(["name": proxy])
         _ = try await perform(settings.request("PUT", segments: ["proxies", group], body: body))

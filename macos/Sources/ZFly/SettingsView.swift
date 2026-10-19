@@ -48,7 +48,7 @@ struct AppSettingsView: View {
 }
 
 private struct CoreSettingsView: View {
-    @EnvironmentObject private var store: Store
+    @Environment(Store.self) private var store
     @State private var baseline = CoreConfig()
     @State private var draft = CoreConfig()
     @State private var ports = [String: String]()

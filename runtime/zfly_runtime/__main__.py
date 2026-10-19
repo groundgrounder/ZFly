@@ -126,14 +126,16 @@ def main():
                 target = core_home / name
                 if source.is_file() and not target.exists():
                     shutil.copyfile(source, target)
-        core = Core(core_path, core_home, secret, args.core_kind if args.core else "mihomo")
+        core = Core(core_path, core_home, secret, args.core_kind if args.core else "mihomo", stop_event=stop)
         service = Service(storage, core, SystemProxy(storage.directory))
         service.start()
         server = Server(service, secret)
         atomic_write(args.ready_file, encode_json({"endpoint": "http://127.0.0.1:" + str(server.server_port),
                                                   "secret": secret, "pid": os.getpid(), "dataDirectory": str(storage.directory)}))
-        threading.Thread(target=server.serve_forever, daemon=True, name="zfly-http").start()
-        last_update = last_health_check = 0
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05},
+                         daemon=True, name="zfly-http").start()
+        # Let the native app finish its first status requests before maintenance.
+        last_update = last_health_check = time.monotonic()
         while not stop.wait(0.25):
             if args.parent_pid and os.getppid() != args.parent_pid:
                 break

@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import tempfile
 
+from .icons import icon_file
+
 
 class StartupPreferences:
     def __init__(self, config_home=None, executable=None):
@@ -55,13 +57,14 @@ class StartupPreferences:
         command = self._quote_exec(str(executable))
         if hidden:
             command += " --start-hidden"
+        icon = icon_file()
         return (
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=ZFly\n"
             "Comment=Start ZFly when you log in\n"
             f"Exec={command}\n"
-            "Icon=io.github.zfly.ZFly\n"
+            f"Icon={icon if icon else 'io.github.zfly.ZFly'}\n"
             "Terminal=false\n"
             "NoDisplay=true\n"
             "StartupNotify=false\n"

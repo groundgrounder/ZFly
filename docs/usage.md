@@ -35,7 +35,7 @@ macOS 关闭最后一个主窗口或设置窗口后，ZFly 隐藏 Dock 图标，
 
 ## Linux 托盘与退出
 
-GTK 版通过 StatusNotifierItem 协议向桌面注册托盘图标，菜单提供运行状态、打开窗口、启动／停止代理及退出。KDE、Noctalia 或启用了 tray 模块的 Waybar 可提供相应托盘区域；GNOME 需要支持 AppIndicator / StatusNotifierItem 的扩展。
+GTK 版通过 StatusNotifierItem 协议向桌面注册托盘图标，菜单提供运行状态、打开窗口、启动／停止代理及退出。托盘和桌面入口直接引用包内 PNG，避免面板因主题图标缓存显示占位图。KDE、Noctalia 或启用了 tray 模块的 Waybar 可提供相应托盘区域；GNOME 需要支持 AppIndicator / StatusNotifierItem 的扩展。
 
 检测到可用托盘时，关闭主窗口会隐藏窗口并保留代理；要停止应用并恢复系统代理，请选择托盘菜单的“退出 ZFly”。没有可用托盘时，关闭窗口仍会退出，登录启动的“隐藏窗口”也会回退为显示窗口。桌面托盘服务消失时，隐藏的窗口会重新显示；面板重启后图标会重新注册。从应用启动器再次打开 ZFly 也能显示已有窗口。
 

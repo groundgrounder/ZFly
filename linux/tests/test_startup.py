@@ -26,6 +26,10 @@ class StartupPreferencesTests(unittest.TestCase):
         self.assertTrue(enabled)
         self.assertTrue(hidden)
         self.assertIn('Exec="' + str(self.executable.resolve()) + '" --start-hidden', entry)
+        icon = Path(next(line.removeprefix("Icon=") for line in entry.splitlines() if line.startswith("Icon=")))
+        self.assertTrue(icon.is_absolute())
+        self.assertTrue(icon.is_file())
+        self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
         self.assertEqual(self.preferences.preferences_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.preferences.autostart_path.stat().st_mode & 0o777, 0o644)
 
@@ -37,7 +41,7 @@ class StartupPreferencesTests(unittest.TestCase):
         self.assertFalse(self.preferences.autostart_path.exists())
 
     def test_missing_executable_does_not_change_preferences(self):
-        preferences = StartupPreferences(self.root / "other-config")
+        preferences = StartupPreferences(self.root / "other-config", self.root / "missing-zfly")
 
         with self.assertRaises(RuntimeError):
             preferences.configure(True, True)

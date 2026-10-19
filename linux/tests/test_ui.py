@@ -86,6 +86,13 @@ class InterfaceTests(unittest.TestCase):
         self.assertTrue(self.window.preview)
         self.assertIsNone(self.window.runtime)
 
+    def test_application_owned_icon_file_is_available(self):
+        from zfly.icons import icon_file
+        icon = icon_file()
+        self.assertIsNotNone(icon)
+        self.assertTrue(icon.is_file())
+        self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
     def test_packaged_navigation_icons_are_available(self):
         theme = Gtk.IconTheme.get_for_display(self.window.get_display())
         for name in ("document-new-symbolic", "network-transmit-receive-symbolic", "applications-engineering-symbolic", "preferences-system-symbolic", "io.github.zfly.ZFly"):

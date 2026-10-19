@@ -1,5 +1,6 @@
 """Tray protocol regressions, run only with --safe-mode on an isolated bus/display."""
 import os
+from pathlib import Path
 import sys
 import time
 import unittest
@@ -144,6 +145,11 @@ class TrayTests(unittest.TestCase):
                                GLib.Variant("(s)", (ITEM,)))[0]
         self.assertEqual(properties["Id"], "zfly")
         self.assertEqual(properties["Status"], "Active")
+        icon = Path(properties["IconName"])
+        self.assertTrue(icon.is_absolute())
+        self.assertTrue(icon.is_file())
+        self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(properties["ToolTip"][0], str(icon))
         self.assertEqual(properties["Menu"], tray.menu_path)
         width, height, pixels = properties["IconPixmap"][0]
         self.assertEqual(len(pixels), width * height * 4)

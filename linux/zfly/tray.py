@@ -1,10 +1,10 @@
 """StatusNotifierItem and DBusMenu integration without a GTK 3 dependency."""
-from pathlib import Path
-
 import gi
 
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf, Gio, GLib
+
+from .icons import icon_file
 
 WATCHER = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
@@ -54,12 +54,8 @@ MENU_XML = """<node><interface name="com.canonical.dbusmenu">
 
 
 def icon_pixmaps():
-    root = Path(__file__).resolve().parents[2]
-    candidates = (root / "icons/hicolor/48x48/apps/io.github.zfly.ZFly.png",
-                  root / "assets/icons/zfly-48.png")
-    for path in candidates:
-        if not path.is_file():
-            continue
+    path = icon_file(48)
+    if path is not None:
         try:
             image = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 32, 32, True)
             pixels = image.get_pixels()
@@ -73,7 +69,7 @@ def icon_pixmaps():
                                  pixels[offset], pixels[offset + 1], pixels[offset + 2]))
             return [(width, height, bytes(data))]
         except GLib.Error:
-            continue
+            pass
     return []
 
 
@@ -92,6 +88,10 @@ class StatusNotifierTray:
         self.revision = 1
         self.description = "正在启动 ZFly…"
         self.entries = {}
+        # External panels may have cached theme lookups before ZFly was installed.
+        # QIcon-based hosts accept an absolute file name; keep pixmaps as well.
+        path = icon_file()
+        self.icon_name = str(path) if path else ""
         self.pixmaps = icon_pixmaps()
         self.objects = []
         self.signals = []
@@ -174,7 +174,7 @@ class StatusNotifierTray:
             return {"Version": GLib.Variant("u", 3), "TextDirection": GLib.Variant("s", "ltr"),
                     "Status": GLib.Variant("s", "normal"), "IconThemePath": GLib.Variant("as", [])}.get(name)
         strings = {"Category": "ApplicationStatus", "Id": "zfly", "Title": "ZFly", "Status": "Active",
-                   "IconName": "io.github.zfly.ZFly", "IconThemePath": "", "OverlayIconName": "",
+                   "IconName": self.icon_name, "IconThemePath": "", "OverlayIconName": "",
                    "AttentionIconName": "", "AttentionMovieName": ""}
         if name in strings:
             return GLib.Variant("s", strings[name])
@@ -183,7 +183,7 @@ class StatusNotifierTray:
         if name in ("OverlayIconPixmap", "AttentionIconPixmap"):
             return GLib.Variant("a(iiay)", [])
         if name == "ToolTip":
-            return GLib.Variant("(sa(iiay)ss)", ("io.github.zfly.ZFly", self.pixmaps, "ZFly", self.description))
+            return GLib.Variant("(sa(iiay)ss)", (self.icon_name, self.pixmaps, "ZFly", self.description))
         if name == "Menu":
             return GLib.Variant("o", self.menu_path)
         if name == "ItemIsMenu":

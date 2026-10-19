@@ -40,6 +40,11 @@
                 install -Dm644 ${./assets/icons}/zfly-$size.png \
                   "$out/share/icons/hicolor/''${size}x''${size}/apps/io.github.zfly.ZFly.png"
               done
+              # Desktop panels can cache a failed theme-name lookup before a
+              # profile is updated. Point the launcher at our immutable image.
+              substituteInPlace "$out/share/applications/io.github.zfly.ZFly.desktop" \
+                --replace-fail "Icon=io.github.zfly.ZFly" \
+                  "Icon=$out/share/icons/hicolor/256x256/apps/io.github.zfly.ZFly.png"
               makeWrapper ${python}/bin/python3 "$out/bin/zfly" \
                 --add-flags "-m zfly" \
                 --set ZFLY_EXECUTABLE "$out/bin/zfly" \

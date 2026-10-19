@@ -17,6 +17,7 @@ from .tools import ToolsPanel
 from .catalog import CatalogPanel
 from .native_runtime import NativeRuntime
 from .tray import StatusNotifierTray
+from .icons import icon_file
 from .ui import EmptyState, button as action_button, clear, install_styles, label, page, page_box
 
 
@@ -74,7 +75,13 @@ class Window(Adw.ApplicationWindow):
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_toolbar = Adw.ToolbarView(content=sidebar)
         brand = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
-        brand.append(Gtk.Image(icon_name="io.github.zfly.ZFly", pixel_size=32))
+        brand_icon = icon_file()
+        if brand_icon:
+            brand_image = Gtk.Image.new_from_file(str(brand_icon))
+            brand_image.set_pixel_size(32)
+        else:
+            brand_image = Gtk.Image(icon_name="io.github.zfly.ZFly", pixel_size=32)
+        brand.append(brand_image)
         brand.append(Adw.WindowTitle(title="ZFly", subtitle="连接，自由掌握"))
         sidebar_toolbar.add_top_bar(Adw.HeaderBar(title_widget=brand))
         self.navigation = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, vexpand=True)

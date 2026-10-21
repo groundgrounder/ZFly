@@ -1,5 +1,40 @@
 import Foundation
 import AppKit
+import Darwin
+
+extension Notification.Name {
+    static let zflyPrepareToQuit = Notification.Name("ZFlyPrepareToQuit")
+}
+
+@objc(ZFlyApplication)
+final class ZFlyApplication: NSApplication {
+    override func terminate(_ sender: Any?) {
+        let sheets = windows.filter { $0.sheetParent != nil }
+        @MainActor func editable(_ view: NSView) -> Bool {
+            if let text = view as? NSTextView, text.isEditable { return true }
+            if let field = view as? NSTextField, field.isEditable { return true }
+            return view.subviews.contains(where: editable)
+        }
+        if sheets.contains(where: { $0.contentView.map(editable) ?? false }) {
+            let alert = NSAlert()
+            alert.messageText = "退出 ZFly？"
+            alert.informativeText = "未保存的编辑将会丢失。"
+            alert.addButton(withTitle: "退出")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        // AppKit defers termination while a SwiftUI sheet is attached. End the
+        // sheets before invoking the regular delegate/runtime shutdown path.
+        NotificationCenter.default.post(name: .zflyPrepareToQuit, object: nil)
+        if sheets.isEmpty { super.terminate(sender) }
+        else {
+            // Let AppKit finish unwinding its sheet session before terminating.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.finishTermination(sender) }
+        }
+    }
+
+    private func finishTermination(_ sender: Any?) { super.terminate(sender) }
+}
 
 @MainActor
 final class NativeRuntime {
@@ -39,6 +74,13 @@ final class NativeRuntime {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("zfly-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         sessionDirectory = directory
+        var started = false
+        defer {
+            if !started {
+                try? FileManager.default.removeItem(at: directory)
+                sessionDirectory = nil
+            }
+        }
         let readyFile = directory.appendingPathComponent("ready.json")
         let child = Process()
         child.executableURL = python
@@ -56,10 +98,15 @@ final class NativeRuntime {
         environment["SSL_CERT_FILE"] = resources.appendingPathComponent("python/cert.pem").path
         child.environment = environment
         child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
+        let errorFile = directory.appendingPathComponent("stderr.log")
+        _ = FileManager.default.createFile(atPath: errorFile.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        let errors = try FileHandle(forWritingTo: errorFile)
+        defer { try? errors.close() }
+        child.standardError = errors
         child.standardInput = FileHandle.nullDevice
         try child.run()
         process = child
+        started = true
         do {
             for _ in 0..<900 {
                 if let data = try? Data(contentsOf: readyFile), let ready = try? JSONDecoder().decode(Ready.self, from: data) {
@@ -70,7 +117,10 @@ final class NativeRuntime {
                     }
                     throw failure("ZFly 运行时返回了无效的启动信息。")
                 }
-                if !child.isRunning { throw failure("ZFly 内置运行时退出，未能启动核心。") }
+                if !child.isRunning {
+                    let diagnostic = (try? String(contentsOf: errorFile, encoding: .utf8)) ?? ""
+                    throw failure("ZFly 内置运行时退出，未能启动核心。" + String(diagnostic.suffix(2000)))
+                }
                 try await Task.sleep(for: .milliseconds(100))
             }
             throw failure("ZFly 核心启动超时。请检查配置引用的远程资源是否可用。")
@@ -89,13 +139,7 @@ final class NativeRuntime {
         // Cleanup must survive cancellation of the startup/polling task. Share it
         // with the application delegate if quitting overlaps runtime startup.
         let task = Task {
-            if child.isRunning {
-                child.terminate()
-                for _ in 0..<600 {
-                    if !child.isRunning { break }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
+            await Self.terminate(child)
             if !child.isRunning {
                 process = nil
                 if let sessionDirectory { try? FileManager.default.removeItem(at: sessionDirectory) }
@@ -107,6 +151,17 @@ final class NativeRuntime {
         shutdownTask = nil
     }
 
+    static func terminate(_ child: Process, grace: Duration = .seconds(3)) async {
+        guard child.isRunning else { return }
+        child.terminate()
+        let deadline = ContinuousClock.now.advanced(by: grace)
+        while child.isRunning && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if child.isRunning { Darwin.kill(child.processIdentifier, SIGKILL) }
+        while child.isRunning { try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
     private func failure(_ message: String) -> NSError {
         NSError(domain: "ZFly.Runtime", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -115,13 +170,14 @@ final class NativeRuntime {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var prepareForTermination: (() -> Void)?
+    var reopenMainWindow: (() -> Void)?
     private var terminating = false
     private var suppressInitialWindow = false
     private let initializedWindows = NSHashTable<NSWindow>.weakObjects()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        suppressInitialWindow = UserDefaults.standard.bool(forKey: "startup.startHidden")
-            && !CommandLine.arguments.contains("--safe-mode")
+        suppressInitialWindow = !CommandLine.arguments.contains("--safe-mode")
+            && UserDefaults.standard.bool(forKey: "startup.startHidden")
         if suppressInitialWindow { NSApp.setActivationPolicy(.accessory) }
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(windowWillClose(_:)), name: NSWindow.willCloseNotification, object: nil)
@@ -135,6 +191,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if sender.activationPolicy() != .regular { sender.setActivationPolicy(.regular) }
+        if !flag {
+            if let window = sender.windows.first(where: isAppWindow) {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+            } else { reopenMainWindow?() }
+        }
         return true
     }
 

@@ -2,22 +2,24 @@ import ServiceManagement
 import SwiftUI
 
 @MainActor
-private final class LoginItemController: ObservableObject {
+final class LoginItemController: ObservableObject {
     @Published private(set) var enabled = false
     @Published private(set) var needsApproval = false
     @Published var error: String?
 
-    init() {
-        refresh()
-    }
+    init() {}
 
     func refresh() {
-        switch SMAppService.mainApp.status {
+        apply(SMAppService.mainApp.status)
+    }
+
+    func apply(_ status: SMAppService.Status) {
+        switch status {
         case .enabled:
             enabled = true
             needsApproval = false
         case .requiresApproval:
-            enabled = true
+            enabled = false
             needsApproval = true
         default:
             enabled = false
@@ -46,6 +48,7 @@ private final class LoginItemController: ObservableObject {
 
 struct StartupSettingsView: View {
     @Environment(Store.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("startup.startHidden") private var startHidden = false
     @StateObject private var loginItem = LoginItemController()
 
@@ -89,6 +92,7 @@ struct StartupSettingsView: View {
             .padding(.horizontal, ZFlyMetrics.pagePadding)
             .padding(.bottom, ZFlyMetrics.pagePadding)
         }
-        .onAppear { loginItem.refresh() }
+        .onAppear { if !store.preview { loginItem.refresh() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active && !store.preview { loginItem.refresh() } }
     }
 }

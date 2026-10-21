@@ -100,3 +100,44 @@ extension ManagementTests {
         XCTAssertNil(store.delays["node"])
     }
 }
+
+extension ManagementTests {
+    func testManagementWireDefaultsAllowMissingOptionalAdditions() throws {
+        var object = try JSONSerialization.jsonObject(with: Snapshot.previewData()) as! [String: Any]
+        var state = object["management"] as! [String: Any]
+        state.removeValue(forKey: "tunAuthorization")
+        state.removeValue(forKey: "coreStatus")
+        var network = state["network"] as! [String: Any]
+        network.removeValue(forKey: "appendSystemDns")
+        state["network"] = network
+        state["futureField"] = ["unknown": true]
+        object["management"] = state
+        let decoded = try JSONDecoder().decode(ManagedState.self, from: JSONSerialization.data(withJSONObject: state))
+        XCTAssertFalse(decoded.network.appendSystemDns)
+        XCTAssertEqual(decoded.coreStatus, "状态暂不可用")
+        state["profiles"] = [["id": "bad"]]
+        XCTAssertThrowsError(try JSONDecoder().decode(ManagedState.self, from: JSONSerialization.data(withJSONObject: state)))
+    }
+
+    @MainActor func testLoginApprovalIsNotShownAsEnabled() {
+        let login = LoginItemController()
+        login.apply(.requiresApproval)
+        XCTAssertFalse(login.enabled)
+        XCTAssertTrue(login.needsApproval)
+        login.apply(.enabled)
+        XCTAssertTrue(login.enabled)
+        XCTAssertFalse(login.needsApproval)
+    }
+
+    @MainActor func testOwnedRuntimeTerminationEscalatesAndReaps() async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sh")
+        child.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+        try child.run()
+        print("Owned termination test PID: \(child.processIdentifier)")
+        try await Task.sleep(for: .milliseconds(100))
+        await NativeRuntime.terminate(child, grace: .milliseconds(100))
+        XCTAssertFalse(child.isRunning)
+        XCTAssertEqual(child.terminationReason, .uncaughtSignal)
+    }
+}

@@ -28,6 +28,24 @@ public struct ManagedProfile: Codable, Equatable, Identifiable, Sendable {
         expire = nil
         revision = nil
     }
+    private enum CodingKeys: String, CodingKey { case id, label, type, url, autoUpdate, updateHours, updated, upload, download, total, expire, revision }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        label = try c.decode(String.self, forKey: .label)
+        type = try c.decode(String.self, forKey: .type)
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        autoUpdate = try c.decodeIfPresent(Bool.self, forKey: .autoUpdate) ?? false
+        updateHours = try c.decodeIfPresent(Int.self, forKey: .updateHours) ?? 24
+        updated = try c.decodeIfPresent(String.self, forKey: .updated)
+        upload = try c.decodeIfPresent(Int64.self, forKey: .upload)
+        download = try c.decodeIfPresent(Int64.self, forKey: .download)
+        total = try c.decodeIfPresent(Int64.self, forKey: .total)
+        expire = try c.decodeIfPresent(Int64.self, forKey: .expire)
+        revision = try c.decodeIfPresent(String.self, forKey: .revision)
+    }
+
 }
 
 public struct ManagedNetwork: Codable, Equatable, Sendable {
@@ -45,6 +63,26 @@ public struct ManagedNetwork: Codable, Equatable, Sendable {
     public var allowLan: Bool
     public var tcpConcurrent: Bool
     public var logLevel: String
+    private enum CodingKeys: String, CodingKey { case tunEnabled, tunStack, tunDevice, systemProxy, bypassDomains, bypassPrivateRoute, autoSetSystemDns, appendSystemDns, mode, mixedPort, ipv6, allowLan, tcpConcurrent, logLevel }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tunEnabled = try c.decodeIfPresent(Bool.self, forKey: .tunEnabled) ?? false
+        tunStack = try c.decodeIfPresent(String.self, forKey: .tunStack) ?? "mixed"
+        tunDevice = try c.decodeIfPresent(String.self, forKey: .tunDevice) ?? "zfly"
+        systemProxy = try c.decodeIfPresent(Bool.self, forKey: .systemProxy) ?? false
+        bypassDomains = try c.decodeIfPresent([String].self, forKey: .bypassDomains) ?? []
+        bypassPrivateRoute = try c.decodeIfPresent(Bool.self, forKey: .bypassPrivateRoute) ?? true
+        autoSetSystemDns = try c.decodeIfPresent(Bool.self, forKey: .autoSetSystemDns) ?? false
+        appendSystemDns = try c.decodeIfPresent(Bool.self, forKey: .appendSystemDns) ?? false
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? "rule"
+        mixedPort = try c.decodeIfPresent(Int.self, forKey: .mixedPort) ?? 7890
+        ipv6 = try c.decodeIfPresent(Bool.self, forKey: .ipv6) ?? false
+        allowLan = try c.decodeIfPresent(Bool.self, forKey: .allowLan) ?? false
+        tcpConcurrent = try c.decodeIfPresent(Bool.self, forKey: .tcpConcurrent) ?? true
+        logLevel = try c.decodeIfPresent(String.self, forKey: .logLevel) ?? "info"
+    }
+
 }
 
 public struct ManagedState: Decodable, Equatable, Sendable {
@@ -56,6 +94,20 @@ public struct ManagedState: Decodable, Equatable, Sendable {
     public var profiles: [ManagedProfile]
     public var network: ManagedNetwork
     public let updateErrors: [String: String]?
+
+    private enum CodingKeys: String, CodingKey { case apiVersion, currentProfileID, running, coreStatus, tunAuthorization, profiles, network, updateErrors }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        apiVersion = try c.decode(Int.self, forKey: .apiVersion)
+        currentProfileID = try c.decodeIfPresent(String.self, forKey: .currentProfileID)
+        running = try c.decodeIfPresent(Bool.self, forKey: .running) ?? false
+        coreStatus = try c.decodeIfPresent(String.self, forKey: .coreStatus) ?? "状态暂不可用"
+        tunAuthorization = try c.decodeIfPresent(String.self, forKey: .tunAuthorization) ?? "权限状态暂不可用"
+        profiles = try c.decode([ManagedProfile].self, forKey: .profiles)
+        network = try c.decode(ManagedNetwork.self, forKey: .network)
+        updateErrors = try c.decodeIfPresent([String: String].self, forKey: .updateErrors)
+    }
 
     public static func preview() throws -> Self {
         struct Fixture: Decodable { let management: ManagedState }

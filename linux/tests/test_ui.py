@@ -627,6 +627,36 @@ class InterfaceTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b"mixed-port: 7890\n")
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 
+    def test_unknown_choice_value_is_preserved(self):
+        from zfly.ui import choice, chosen
+        group = Adw.PreferencesGroup()
+        row = choice(group, 'value', ['known'], 'future')
+        self.assertEqual(chosen(row), 'future')
+
+    def test_connection_without_id_still_renders(self):
+        self.window.data['connections']['connections'] = [{'metadata': {'host': 'example.test'}}]
+        self.window._render_connections()
+        self.assertIsNotNone(self.window.connection_list.get_first_child())
+
+    def test_readonly_poll_preserves_buffer_selection(self):
+        panel = self.window.workspace_panel
+        self.window.page = '规则与高级'
+        panel.section.set_selected(panel.section_names.index('logs'))
+        self.wait(lambda: panel.active_key in panel.drafts and not self.window.busy and not self.window.refreshing)
+        panel.buffer.select_range(panel.buffer.get_start_iter(), panel.buffer.get_iter_at_offset(3))
+        panel.receive(refresh=True)
+        self.wait(lambda: not self.window.busy and not self.window.refreshing)
+        self.assertTrue(panel.buffer.get_has_selection())
+
+    def test_proxy_picker_falls_back_when_selected_group_disappears(self):
+        self.window.page = '代理组'
+        proxies = self.window.data['proxies']['proxies']
+        proxies.clear()
+        proxies.update({'GLOBAL': {'type': 'Selector', 'all': ['second']}, 'second': {'type': 'Selector', 'all': ['DIRECT']}})
+        self.window._render_lists(force=True)
+        self.assertEqual(self.window.group_picker.get_selected_item().get_string(), 'second')
+        self.assertIsNotNone(self.window.proxy_list.get_first_child())
+
 
 if __name__ == "__main__":
     if not SAFE_MODE or not UI_AVAILABLE:

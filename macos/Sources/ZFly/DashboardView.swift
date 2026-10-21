@@ -184,7 +184,7 @@ struct StatusMenu: View {
     @Environment(Store.self) private var store
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(LocalizedStringKey(store.preview ? "ZFly · 演示模式" : "ZFly · " + (store.management?.coreStatus ?? "正在启动")))
+        Text(verbatim: store.preview ? "ZFly · 演示模式" : "ZFly · " + (store.management?.coreStatus ?? "正在启动"))
         if let profile = store.management?.profiles.first(where: { $0.id == store.management?.currentProfileID }) { Text(profile.label) }
         Button(
             store.management?.running == true ? "停止代理" : "启动代理",

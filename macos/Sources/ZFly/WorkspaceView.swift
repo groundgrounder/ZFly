@@ -52,7 +52,7 @@ struct WorkspaceView: View {
             }.frame(minHeight: 44)
             if store.management == nil {
                 ContentUnavailableView("等待本地运行时就绪", systemImage: "cable.connector",
-                                       description: Text(LocalizedStringKey(store.managementStatus)))
+                                       description: Text(verbatim: store.managementStatus))
             } else if let draft = current {
                 VStack(spacing: 0) {
                     HStack {
@@ -85,7 +85,7 @@ struct WorkspaceView: View {
             } else {
                 ContentUnavailableView(section.profileSpecific && profileID.isEmpty ? "先选择配置" : "尚未载入", systemImage: "doc.text")
             }
-            if !message.isEmpty { Text(LocalizedStringKey(message)).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary).textSelection(.enabled) }
+            if !message.isEmpty { Text(verbatim: message).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary).textSelection(.enabled) }
             HStack {
                 Button("导出文本") { export() }.disabled(current == nil || store.isBusy)
                 Spacer()
@@ -96,7 +96,7 @@ struct WorkspaceView: View {
             }
         }.padding(ZFlyMetrics.pagePadding)
             .task { if profileID.isEmpty { profileID = store.management?.currentProfileID ?? "" }; if current == nil { load() } }
-            .onChange(of: key) { _, _ in message = ""; query = ""; if current == nil { load() } }
+            .onChange(of: key) { _, _ in message = ""; query = ""; source = false; if current == nil { load() } }
             .onChange(of: store.management?.currentProfileID) { _, value in if profileID.isEmpty { profileID = value ?? "" } }
             .onChange(of: store.management?.profiles.map(\.id)) { _, ids in
                 if let ids, !profileID.isEmpty, !ids.contains(profileID) {
@@ -163,6 +163,7 @@ struct WorkspaceView: View {
         do {
             try Data(draft.text.utf8).write(to: url, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            failed = false; message = "文本已导出。"
         }
         catch { failed = true; message = error.localizedDescription }
     }
@@ -179,7 +180,7 @@ private struct JSONPreferencesEditor: View {
                     ForEach(keys, id: \.self) { key in
                         if key != keys.first { Divider().opacity(0.5) }
                         HStack(spacing: 24) {
-                            Text(LocalizedStringKey(key)).font(.callout)
+                            Text(verbatim: key).font(.callout)
                             Spacer(minLength: 0)
                             if let number = object[key] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
                                 Toggle(key, isOn: Binding(get: { (self.object?[key] as? Bool) ?? false }, set: { update(key, $0) }))
@@ -338,7 +339,7 @@ struct ToolsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ScrollView([.vertical, .horizontal]) {
-                    Text(LocalizedStringKey(output)).foregroundStyle(failed ? Color.red : Color.primary)
+                    Text(verbatim: output).foregroundStyle(failed ? Color.red : Color.primary)
                         .font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(height: 118)
@@ -368,7 +369,7 @@ struct ToolsView: View {
                     let panel = NSOpenPanel(); panel.allowsMultipleSelection = false
                     guard await panel.begin() == .OK, let url = panel.url else { return }
                     let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                    guard size <= 16 * 1024 * 1024 else { throw ControllerError.invalidConfig("备份超过 16 MiB。") }
+                    guard size <= 40 * 1024 * 1024 else { throw ControllerError.invalidConfig("备份超过 40 MiB。") }
                     command.data = try Data(contentsOf: url).base64EncodedString()
                 }
                 let result = try await store.perform(command)

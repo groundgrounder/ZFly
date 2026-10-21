@@ -3,7 +3,15 @@ import SwiftUI
 import ZFlyKit
 
 @main
+enum ZFlyEntry {
+    @MainActor static func main() {
+        _ = ZFlyApplication.shared
+        ZFlyApp.main()
+    }
+}
+
 struct ZFlyApp: App {
+    @Environment(\.openWindow) private var openWindow
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = Store(preview: CommandLine.arguments.contains("--safe-mode"))
     @AppStorage("appearance.scheme") private var scheme = "system"
@@ -19,6 +27,7 @@ struct ZFlyApp: App {
                     AppAppearance.apply(value, to: NSApplication.shared)
                 }
                 .onAppear {
+                    appDelegate.reopenMainWindow = { openWindow(id: "main") }
                     appDelegate.prepareForTermination = { store.stopPolling() }
                     store.startPolling()
                 }
@@ -131,7 +140,7 @@ private struct MainView: View {
                 if !store.connected && !store.preview {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-                        Text(LocalizedStringKey(store.status)).lineLimit(2)
+                        Text(verbatim: store.status).lineLimit(2)
                         Spacer(minLength: 8)
                         Button("重试启动") { Task { await store.startRuntime() } }.disabled(store.isBusy)
                     }
@@ -171,12 +180,13 @@ private struct MainView: View {
             }
         }
         .sheet(isPresented: $controllerSettings) { ControllerSheet() }
+        .onReceive(NotificationCenter.default.publisher(for: .zflyPrepareToQuit)) { _ in controllerSettings = false }
         .alert("操作未完成", isPresented: Binding(
             get: { store.actionError != nil },
             set: { if !$0 { store.actionError = nil } }
         )) {
             Button("好") { store.actionError = nil }
-        } message: { Text(LocalizedStringKey(store.actionError ?? "")) }
+        } message: { Text(verbatim: store.actionError ?? "") }
     }
 
     private var sidebarContent: some View {
@@ -223,7 +233,7 @@ private struct MainView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             Circle().fill(store.preview ? ZFlyPalette.tint : (store.connected ? Color.green : .orange)).frame(width: 5, height: 5)
-            Text(LocalizedStringKey(store.preview ? "演示模式 · 不连接核心" : store.status)).lineLimit(1)
+            Text(verbatim: store.preview ? "演示模式 · 不连接核心" : store.status).lineLimit(1)
             Spacer(minLength: 8)
             if store.isBusy || store.refreshingStatus { ProgressView().controlSize(.mini) }
             Button("刷新", systemImage: "arrow.clockwise") { Task { await store.refreshStatus() } }

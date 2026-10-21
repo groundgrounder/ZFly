@@ -133,7 +133,7 @@ private struct CoreSettingsView: View {
                                     }
                                 }
                             }
-                            Text("端口范围 0–65535；0 表示关闭该监听。")
+                            Text("混合端口范围 1–65535；HTTP / SOCKS 端口可填 0 关闭。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Text("设置由 ZFly 持久保存，修改失败时自动恢复原配置。系统代理和 TUN 状态在网络接管中管理。")
@@ -141,7 +141,7 @@ private struct CoreSettingsView: View {
                     }.padding(.horizontal, ZFlyMetrics.pagePadding).padding(.bottom, ZFlyMetrics.pagePadding)
                 }.disabled(!store.connected || store.isBusy || saving)
                 HStack {
-                    if let message { Text(LocalizedStringKey(message)).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary) }
+                    if let message { Text(verbatim: message).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary) }
                     Spacer()
                     Button("重新载入") { reload() }.disabled(saving || store.isBusy)
                     Button(saving ? "应用中…" : "应用更改") { save() }

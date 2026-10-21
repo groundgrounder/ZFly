@@ -51,6 +51,7 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
   <key>CFBundleIconFile</key><string>ZFly</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSPrincipalClass</key><string>ZFlyApplication</string>
   <key>CFBundleShortVersionString</key><string>build</string>
   <key>CFBundleVersion</key><string>build</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

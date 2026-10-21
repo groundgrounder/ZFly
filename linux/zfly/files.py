@@ -4,13 +4,13 @@ from gi.repository import Gio, GLib
 from .controller import ControllerError
 
 
-def read_file(target, limit, title="文件"):
+def read_file(target, limit, title="文件", cancellable=None):
     try:
-        stream = target.read(None)
+        stream = target.read(cancellable)
         try:
             chunks, length = [], 0
             while True:
-                chunk = stream.read_bytes(min(65536, limit + 1 - length), None).get_data()
+                chunk = stream.read_bytes(min(65536, limit + 1 - length), cancellable).get_data()
                 if not chunk:
                     return b"".join(chunks)
                 chunks.append(chunk)
@@ -19,7 +19,9 @@ def read_file(target, limit, title="文件"):
                     raise ControllerError(f"{title}不能超过 {limit // (1024 * 1024)} MiB。")
         finally:
             stream.close(None)
-    except GLib.Error:
+    except GLib.Error as error:
+        if error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+            raise ControllerError("读取已取消。") from None
         raise ControllerError("无法读取所选文件，请检查文件权限和连接。") from None
 
 

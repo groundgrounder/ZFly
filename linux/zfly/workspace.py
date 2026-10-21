@@ -164,12 +164,28 @@ class WorkspacePanel(Gtk.Box):
         def receive(result):
             document = result["document"]
             self.drafts[key] = {"document": document, "text": document["text"]}
-            if self._key() == key:
-                self._select()
+            if self._key() == key and (not background or self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), True) != document["text"]):
+                if background and not document["writable"]:
+                    self._update_readonly(document["text"])
+                else:
+                    self._select()
         self.loading.add(key)
         self.attempted.add(key)
         self.window.manage(command, receive, done=lambda: self.loading.discard(key),
                            background=background, on_error=self._show_error)
+
+    def _update_readonly(self, text):
+        insert = self.buffer.get_iter_at_mark(self.buffer.get_insert()).get_offset()
+        bound = self.buffer.get_iter_at_mark(self.buffer.get_selection_bound()).get_offset()
+        adjustment = self.editor.get_parent().get_vadjustment()
+        position = adjustment.get_value()
+        self.loading_buffer = True
+        self.buffer.set_text(text)
+        count = self.buffer.get_char_count()
+        self.buffer.select_range(self.buffer.get_iter_at_offset(min(insert, count)), self.buffer.get_iter_at_offset(min(bound, count)))
+        self.loading_buffer = False
+        from gi.repository import GLib
+        GLib.idle_add(lambda: (adjustment.set_value(position), GLib.SOURCE_REMOVE)[1])
 
     def reload(self):
         draft = self.drafts.get(self._key())
@@ -235,11 +251,12 @@ class WorkspacePanel(Gtk.Box):
             return
         dialog = Gtk.FileChooserNative(title="导出文本", transient_for=self.window, action=Gtk.FileChooserAction.SAVE, accept_label="保存", cancel_label="取消")
         dialog.set_current_name(self._key()[0] + (".json" if draft["document"]["format"] == "json" else ".txt"))
-        text = draft["text"]
+        key = self._key()
         def response(chooser, result):
             target = chooser.get_file()
             chooser.destroy()
             if result == Gtk.ResponseType.ACCEPT and target:
+                text = self.drafts.get(key, draft)["text"]
                 self.window._submit(lambda: write_file(target, text), lambda _value: self.window.toast("文本已导出。"), action=True)
         dialog.connect("response", response)
         dialog.show()

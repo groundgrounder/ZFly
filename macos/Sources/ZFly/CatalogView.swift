@@ -77,7 +77,7 @@ struct CatalogView: View {
                     }
             }
             if busy { ProgressView().controlSize(.small) }
-            if !message.isEmpty { Text(LocalizedStringKey(message)).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            if !message.isEmpty { Text(verbatim: message).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
         }.padding(ZFlyMetrics.pagePadding)
             .task { chooseProfile(); if active { load() } }
             .onChange(of: scope) { _, _ in message = ""; query = ""; if cache[scope] == nil { load() } }
@@ -88,6 +88,7 @@ struct CatalogView: View {
             .sheet(item: $editing) { selection in
                 CatalogEditor(selection: selection) { cache.removeAll(); load() }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .zflyPrepareToQuit)) { _ in editing = nil }
     }
 
     private func chooseProfile() {
@@ -136,6 +137,7 @@ private struct CatalogEditor: View {
     let selection: CatalogSelection
     let changed: () -> Void
     @State private var text: String
+    @State private var revision: String
     @State private var message = ""
     @State private var working = false
     @State private var deleting = false
@@ -144,16 +146,27 @@ private struct CatalogEditor: View {
     init(selection: CatalogSelection, changed: @escaping () -> Void) {
         self.selection = selection; self.changed = changed
         _text = State(initialValue: selection.document.text)
+        _revision = State(initialValue: selection.document.revision)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(LocalizedStringKey(selection.document.title)).font(.title2.bold())
+            Text(verbatim: selection.document.title).font(.title2.bold())
             Text("使用 JSON 编辑节点或代理组。保存前会检查版本；字段需符合核心配置格式。")
                 .font(.callout).foregroundStyle(.secondary)
             TextEditor(text: $text).font(.system(.body, design: .monospaced)).disabled(working)
-            if !message.isEmpty { Text(LocalizedStringKey(message)).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            if !message.isEmpty { Text(verbatim: message).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
+                Button("重新载入") {
+                    working = true
+                    Task {
+                        defer { working = false }
+                        do {
+                            guard let document = try await store.perform(selection.command).document else { throw ControllerError.invalidResponse }
+                            text = document.text; revision = document.revision; message = ""
+                        } catch { message = error.localizedDescription }
+                    }
+                }
                 if selection.command.id != nil { Button("删除", role: .destructive) { deleting = true } }
                 Spacer()
                 Button("取消") { if text != selection.document.text { discarding = true } else { dismiss() } }
@@ -171,7 +184,7 @@ private struct CatalogEditor: View {
     }
 
     private func send(_ action: String) {
-        var request = selection.command; request.action = action; request.revision = selection.document.revision; request.text = text
+        var request = selection.command; request.action = action; request.revision = revision; request.text = text
         working = true
         Task {
             defer { working = false }

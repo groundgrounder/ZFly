@@ -149,7 +149,6 @@ public struct Controller: Sendable {
 
     public func delay(proxy: String) async throws -> Int {
         let query = [
-            URLQueryItem(name: "url", value: "https://www.gstatic.com/generate_204"),
             URLQueryItem(name: "timeout", value: "5000"),
         ]
         let data = try await perform(settings.request("GET", segments: ["proxies", proxy, "delay"], query: query))

@@ -1,3 +1,4 @@
+import logging
 from .proxy_model import group_names
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +55,7 @@ class Window(Adw.ApplicationWindow):
         self.delay_scope = None
         self.measuring = set()
         self.measurements = {}
+        self.file_cancellables = set()
         self.pending_refresh = False
         self.busy = False
         self.refreshing = False
@@ -387,13 +389,22 @@ class Window(Adw.ApplicationWindow):
                 self.management_client.perform({"action": "tool.run", "tool": "restart"})
                 return None
             return self.runtime.start()
-        self._submit(start, ready)
+        def failed(message):
+            self.management_status = "启动失败：" + message
+            self.status.set_label(self.management_status)
+            self.toast(message)
+        self._submit(start, ready, on_error=failed)
 
     def _close(self, *_args):
         app = self.get_application()
+        for cancellable in self.file_cancellables:
+            cancellable.cancel()
+        for cancel in self.measurements.values():
+            cancel.set()
         if not self.closed and not self.shutdown_complete and app.hide_window(self):
             return True
         if self.preview:
+            self.shutdown_complete = True
             self.closed = True
             self.generation += 1
             GLib.source_remove(self.timer)
@@ -520,7 +531,11 @@ class Window(Adw.ApplicationWindow):
             try:
                 value = operation()
             except Exception as error:
-                message = str(error) if isinstance(error, ControllerError) else "控制器返回了无法识别的数据。"
+                # Log the exception type and code locations without credential-bearing arguments.
+                import traceback
+                frames = traceback.extract_tb(error.__traceback__)
+                logging.getLogger("zfly").error("%s at %s", type(error).__name__, "; ".join(f"{Path(f.filename).name}:{f.lineno}:{f.name}" for f in frames))
+                message = str(error) if isinstance(error, ControllerError) else "无法读取或保存文件，请检查磁盘空间和权限。" if isinstance(error, OSError) else "操作失败，请重试；详细位置已记录到日志。"
                 GLib.idle_add(finish, None, ControllerError(message))
             else:
                 GLib.idle_add(finish, value, None)
@@ -548,7 +563,7 @@ class Window(Adw.ApplicationWindow):
                 state = management.snapshot() if management else None
                 status = "演示模式 · 操作不会修改系统" if self.preview else "ZFly 运行时已就绪"
             except ControllerError as error:
-                state, status = None, "本地运行时未连接：" + str(error)
+                state, status = None, "状态可能过期，请重试：" + str(error)
             return data, core_error, state, status
         def receive(result):
             data, core_error, state, status = result
@@ -770,10 +785,14 @@ class Window(Adw.ApplicationWindow):
             ) if value)
             row = Adw.ActionRow(title=destination(connection), subtitle=subtitle)
             row.set_use_markup(False)
-            row.add_suffix(action_button("关闭这条连接", lambda identity=connection["id"]: self._action("close", identity), "window-close-symbolic"))
+            if isinstance(connection.get("id"), str) and connection["id"]:
+                row.add_suffix(action_button("关闭这条连接", lambda identity=connection["id"]: self._action("close", identity), "window-close-symbolic"))
             self.connection_list.append(row)
 
     def _action(self, method, *args):
+        if self.busy:
+            self.toast("请等待当前操作完成后重试。")
+            return
         if method == "delay":
             self.measure_proxy(args[0])
             return
@@ -911,7 +930,7 @@ class Application(Adw.Application):
 
     def do_activate(self):
         Gtk.Window.set_default_icon_name("io.github.zfly.ZFly")
-        if self.window is None or self.window.shutdown_complete:
+        if self.window is None or self.window.shutdown_complete or self.window.closed:
             self.quitting = False
             self.window = Window(self, self.preview)
         self.update_tray()
@@ -958,7 +977,7 @@ class Application(Adw.Application):
             self.tray.update()
 
     def present_window(self):
-        if self.window is None or self.window.shutdown_complete:
+        if self.window is None or self.window.shutdown_complete or self.window.closed:
             self.activate()
             return
         self._release_hidden()

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 
 from .controller import ControllerError
 
@@ -14,8 +15,15 @@ class NativeRuntime:
     def __init__(self):
         self.process = None
         self.directory = None
+        self._lock = threading.RLock()
+        self._stop_requested = threading.Event()
 
     def start(self):
+        with self._lock:
+            self._stop_requested.clear()
+            return self._start_locked()
+
+    def _start_locked(self):
         if self.process is not None and self.process.poll() is not None:
             self.stop()
         if self.process is not None:
@@ -35,6 +43,8 @@ class NativeRuntime:
             self.process = subprocess.Popen(arguments, env=env, stdin=subprocess.DEVNULL,
                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for _ in range(900):
+                if self._stop_requested.is_set():
+                    raise ControllerError("ZFly 启动已取消。")
                 if ready.is_file():
                     result = json.loads(ready.read_text())
                     ready.unlink()
@@ -52,14 +62,21 @@ class NativeRuntime:
             raise
 
     def stop(self):
+        self._stop_requested.set()
+        with self._lock:
+            return self._stop_locked()
+
+    def _stop_locked(self):
         if self.process is not None:
             if self.process.poll() is None:
                 self.process.terminate()
-            # The service restores its proxy lease before it exits. Do not kill it.
+            # The normal runtime restores its lease before exit. A wedged owned
+            # child is killed after a grace period; its lease remains recoverable.
             try:
-                self.process.wait(timeout=55)
+                self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                return False
+                self.process.kill()
+                self.process.wait(timeout=3)
             self.process = None
         if self.directory:
             self.directory.cleanup()

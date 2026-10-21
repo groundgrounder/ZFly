@@ -47,6 +47,9 @@ def switch(group, title, active=False):
 
 def choice(group, title, values, current):
     names = {"rule": "规则", "global": "全局", "direct": "直连", "silent": "静默", "error": "错误", "warning": "警告", "info": "信息", "debug": "调试", "off": "关闭", "always": "始终", "strict": "严格"}
+    values = list(values)
+    if current not in values:
+        values.append(current)
     row = Adw.ComboRow(title=title, model=Gtk.StringList.new([names.get(value, value) for value in values]))
     if current in values:
         row.set_selected(values.index(current))
@@ -67,11 +70,18 @@ def clear(box):
         child = following
 
 
+_styled_displays = set()
+
+
 def install_styles():
+    display = Gdk.Display.get_default()
+    if display is None or display in _styled_displays:
+        return
+    _styled_displays.add(display)
     provider = Gtk.CssProvider()
     provider.load_from_data(STYLES.encode())
     Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
 
 
@@ -136,7 +146,7 @@ class EmptyState(Gtk.Box):
         self.description.set_label(description)
 
 
-def modal_window(parent, title, width=560, height=520):
+def modal_window(parent, title, width=560, height=520, scroll=True):
     dialog = Adw.Window(
         title=title, transient_for=parent, modal=True,
         default_width=max(300, min(width, parent.get_width() - 32)),
@@ -149,7 +159,7 @@ def modal_window(parent, title, width=560, height=520):
     cancel.connect("clicked", lambda _button: dialog.close())
     header.pack_start(cancel)
     toolbar.add_top_bar(header)
-    toolbar.set_content(Gtk.ScrolledWindow(child=content, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True))
+    toolbar.set_content(Gtk.ScrolledWindow(child=content, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True) if scroll else content)
     dialog.set_content(toolbar)
     # set_deletable(False) only hides window-manager controls; close() and
     # keyboard shortcuts must also wait for the mutation to finish.

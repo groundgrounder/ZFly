@@ -28,13 +28,14 @@ struct ManagementView: View {
                 Text("ZFly 正在准备运行环境").font(.title2.bold())
                 Text("ZFly 会自动启动自己的本地服务和代理核心。准备完成后即可直接添加订阅或导入 YAML 配置。")
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                Text(LocalizedStringKey(store.managementStatus)).font(.callout).textSelection(.enabled)
+                Text(verbatim: store.managementStatus).font(.callout).textSelection(.enabled)
                 HStack {
                     Button("重试启动") { Task { await store.startRuntime(); await store.refreshManagement() } }
                     Button("运行信息") { connection = true }.modifier(ActionStyle(prominent: true))
                 }.disabled(store.isBusy)
             }.padding(36).frame(maxWidth: 620).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .sheet(isPresented: $connection) { ControllerSheet() }
+                .onReceive(NotificationCenter.default.publisher(for: .zflyPrepareToQuit)) { _ in connection = false }
         }
     }
 }
@@ -78,7 +79,7 @@ private struct ProfileManagement: View {
                 }
             }
             if let message {
-                Label(LocalizedStringKey(message), systemImage: failed ? "exclamationmark.circle" : "checkmark.circle")
+                Label { Text(verbatim: message) } icon: { Image(systemName: failed ? "exclamationmark.circle" : "checkmark.circle") }
                     .font(.callout).foregroundStyle(failed ? Color.red : ZFlyPalette.tint).textSelection(.enabled)
             }
         }.padding(ZFlyMetrics.pagePadding)
@@ -98,6 +99,9 @@ private struct ProfileManagement: View {
         }
         .sheet(item: $editing) { ProfileProperties(profile: $0) }
         .sheet(item: $document) { ProfileEditor(document: $0) }
+        .onReceive(NotificationCenter.default.publisher(for: .zflyPrepareToQuit)) { _ in
+            adding = false; editing = nil; document = nil
+        }
         .alert("删除配置？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("取消", role: .cancel) { deleting = nil }
             Button("删除", role: .destructive) {
@@ -296,7 +300,7 @@ private struct ProfileProperties: View {
                     TextField("更新间隔（小时）", text: $hours).disabled(!autoUpdate)
                 }
             }.disabled(saving)
-            if let message { Text(LocalizedStringKey(message)).foregroundStyle(.red).font(.callout) }
+            if let message { Text(verbatim: message).foregroundStyle(.red).font(.callout) }
             HStack {
                 if profile != nil {
                     Button("重新载入") {
@@ -383,7 +387,7 @@ private struct ProfileEditor: View {
                 .font(.callout).foregroundStyle(.secondary)
             PlainTextEditor(text: $text, editable: editable && !saving)
                 .padding(12).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: ZFlyMetrics.editorRadius, style: .continuous))
-            if let message { Text(LocalizedStringKey(message)).foregroundStyle(.red).font(.callout) }
+            if let message { Text(verbatim: message).foregroundStyle(.red).font(.callout) }
             HStack {
                 Spacer()
                 Button("关闭") {
@@ -531,7 +535,7 @@ private struct NetworkManagement: View {
                 }.padding(.horizontal, ZFlyMetrics.pagePadding).padding(.bottom, ZFlyMetrics.pagePadding)
             }.disabled(disabled)
             HStack {
-                if let message { Text(LocalizedStringKey(message)).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary) }
+                if let message { Text(verbatim: message).font(.callout).foregroundStyle(failed ? Color.red : Color.secondary) }
                 Spacer()
                 if disabled { ProgressView().controlSize(.small) }
                 Button("重新载入") { reload(state.network) }.disabled(disabled)

@@ -2,7 +2,7 @@
 import base64
 from pathlib import Path
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, Gio, Gtk
 
 from .ui import button, entry, choice, chosen, label, primary_button
 from .files import read_file, write_file
@@ -134,11 +134,13 @@ class ToolsPanel(Gtk.Box):
                 target = dialog.get_file()
                 dialog.destroy()
                 if answer == Gtk.ResponseType.ACCEPT and target:
+                    cancellable = Gio.Cancellable()
+                    self.window.file_cancellables.add(cancellable)
                     def read():
-                        return base64.b64encode(read_file(target, 16 * 1024 * 1024, "备份")).decode()
+                        return base64.b64encode(read_file(target, 40 * 1024 * 1024, "备份", cancellable)).decode()
                     def restore(data):
                         self.window.manage({**command, "data": data}, self._tool_result, on_error=self._show_result)
-                    self.window._submit(read, restore, action=True, on_error=self._show_result)
+                    self.window._submit(read, restore, action=True, on_error=self._show_result, done=lambda: self.window.file_cancellables.discard(cancellable))
             chooser.connect("response", response)
             chooser.show()
         else:

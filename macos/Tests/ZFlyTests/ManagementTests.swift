@@ -69,7 +69,7 @@ extension ManagementTests {
         XCTAssertTrue(fallback.isAutomatic)
         XCTAssertTrue(fallback.canSelect)
         XCTAssertEqual(fallback.fixed, "B")
-        let store = Store(preview: true)
+        let store = try await connectedPreviewStore()
         await store.refreshManagement()
         await store.refresh()
         await store.select(group: "自动选择", proxy: "新加坡")

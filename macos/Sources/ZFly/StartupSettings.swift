@@ -49,7 +49,7 @@ final class LoginItemController: ObservableObject {
 struct StartupSettingsView: View {
     @Environment(Store.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("startup.startHidden") private var startHidden = false
+    @AppStorage("startup.startHidden", store: PreviewOptions.preferences) private var startHidden = false
     @StateObject private var loginItem = LoginItemController()
 
     private var loginBinding: Binding<Bool> {

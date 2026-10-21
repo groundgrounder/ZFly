@@ -14,8 +14,8 @@ struct ZFlyApp: App {
     @Environment(\.openWindow) private var openWindow
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = Store(preview: CommandLine.arguments.contains("--safe-mode"))
-    @AppStorage("appearance.scheme") private var scheme = "system"
-    @AppStorage("appearance.language") private var language = AppLanguage.system.rawValue
+    @AppStorage("appearance.scheme", store: PreviewOptions.preferences) private var scheme = "system"
+    @AppStorage("appearance.language", store: PreviewOptions.preferences) private var language = AppLanguage.system.rawValue
 
     var body: some Scene {
         Window("ZFly", id: "main") {
@@ -29,6 +29,7 @@ struct ZFlyApp: App {
                 .onAppear {
                     appDelegate.reopenMainWindow = { openWindow(id: "main") }
                     appDelegate.prepareForTermination = { store.stopPolling() }
+                    appDelegate.previewReady = { store.connected && store.snapshot != nil && store.management != nil }
                     store.startPolling()
                 }
         }
@@ -137,7 +138,7 @@ private struct MainView: View {
                 Color.primary.opacity(0.08).frame(width: 1)
             }
             VStack(spacing: 0) {
-                if !store.connected && !store.preview {
+                if !store.connected {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
                         Text(verbatim: store.status).lineLimit(2)
@@ -233,11 +234,11 @@ private struct MainView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             Circle().fill(store.preview ? ZFlyPalette.tint : (store.connected ? Color.green : .orange)).frame(width: 5, height: 5)
-            Text(verbatim: store.preview ? "演示模式 · 不连接核心" : store.status).lineLimit(1)
+            Text(verbatim: store.preview ? "演示模式 · 隔离运行时" : store.status).lineLimit(1)
             Spacer(minLength: 8)
             if store.isBusy || store.refreshingStatus { ProgressView().controlSize(.mini) }
             Button("刷新", systemImage: "arrow.clockwise") { Task { await store.refreshStatus() } }
-                .labelStyle(.iconOnly).help("刷新核心状态").disabled(store.isBusy || store.preview)
+                .labelStyle(.iconOnly).help("刷新核心状态").disabled(store.isBusy)
             Button("运行信息") { controllerSettings = true }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary).buttonStyle(.plain)

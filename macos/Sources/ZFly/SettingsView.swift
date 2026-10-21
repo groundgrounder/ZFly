@@ -203,7 +203,7 @@ private struct CoreSettingsView: View {
                     try await store.configure(config, baseline: baseline)
                     reload()
                     failed = false
-                    message = store.preview ? "已更新演示设置" : "已应用到当前核心"
+                    message = "已应用到当前核心"
                 } catch {
                     failed = true
                     message = error.localizedDescription
@@ -217,10 +217,10 @@ private struct CoreSettingsView: View {
 }
 
 private struct AppearanceSettingsView: View {
-    @AppStorage("appearance.scheme") private var scheme = "system"
-    @AppStorage("appearance.language") private var language = AppLanguage.system.rawValue
-    @AppStorage("appearance.glass") private var glass = true
-    @AppStorage("appearance.ambient") private var ambient = true
+    @AppStorage("appearance.scheme", store: PreviewOptions.preferences) private var scheme = "system"
+    @AppStorage("appearance.language", store: PreviewOptions.preferences) private var language = AppLanguage.system.rawValue
+    @AppStorage("appearance.glass", store: PreviewOptions.preferences) private var glass = true
+    @AppStorage("appearance.ambient", store: PreviewOptions.preferences) private var ambient = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {

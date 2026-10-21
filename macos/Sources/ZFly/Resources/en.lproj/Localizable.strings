@@ -22,7 +22,7 @@
 "显示或隐藏侧边栏" = "Show or hide the sidebar";
 "演示模式" = "Preview mode";
 "核心已连接" = "Core connected";
-"演示模式 · 不连接核心" = "Preview mode · core disconnected";
+"演示模式 · 隔离运行时" = "Preview mode · isolated runtime";
 "刷新" = "Refresh";
 "刷新状态" = "Refresh status";
 "刷新核心状态" = "Refresh core status";
@@ -174,10 +174,7 @@
 "ZFly 运行时已就绪" = "ZFly runtime is ready";
 "ZFly 运行时正在启动，请稍候。" = "ZFly runtime is starting. Please wait.";
 "ZFly 运行时返回了无效的启动信息。" = "ZFly runtime returned invalid startup information.";
-"不支持的分类。" = "Unsupported category.";
-"不支持的工具操作。" = "Unsupported tool operation.";
 "不支持的核心工具。" = "Unsupported core tool.";
-"不支持的管理操作。" = "Unsupported management operation.";
 "丢弃" = "Discard";
 "丢弃并重新载入" = "Discard and reload";
 "丢弃未保存的编辑？" = "Discard unsaved edits?";
@@ -185,7 +182,6 @@
 "保存前由核心校验；当前配置保存后重新应用。加密文件请使用外部编辑器。" = "The core validates the profile before saving; the active profile is reapplied afterward. Edit encrypted files externally.";
 "停止核心" = "Stop core";
 "关闭全部连接？应用需要重新建立网络连接。" = "Close all connections? The app will need to re-establish network connections.";
-"内容只读或已修改，请重新载入。" = "Content is read-only or was modified. Reload it.";
 "列表 · 在源文本中编辑" = "List · edit in source text";
 "创建" = "Create";
 "删除此资源？使用此节点或代理组的引用可能失效。" = "Delete this resource? References to this node or proxy group may stop working.";
@@ -201,10 +197,7 @@
 "将替换配置和 ZFly 偏好，并停止代理。恢复后请检查配置再启动。" = "This replaces profiles and ZFly preferences and stops the proxy. Check the restored profiles before restarting.";
 "嵌套配置 · 在源文本中编辑" = "Nested settings · edit in source text";
 "已保存并提交应用。" = "Saved and applied.";
-"已保存演示设置" = "Preview settings saved";
 "已应用到当前核心" = "Applied to the current core";
-"已更新演示设置" = "Preview settings updated";
-"应用缺少内置核心或运行时，请运行 macos/build-app.sh 构建完整的 ZFly.app。" = "The app is missing its built-in core or runtime. Run macos/build-app.sh to build a complete ZFly.app.";
 "应用资源目录不存在。" = "The app resources directory does not exist.";
 "开启" = "On";
 "恢复会覆盖当前数据" = "Restore will overwrite current data";
@@ -212,7 +205,6 @@
 "操作已完成。" = "Operation completed.";
 "放弃修改" = "Discard changes";
 "放弃尚未保存的修改？" = "Discard unsaved changes?";
-"文件只读或已被修改，请重新打开。" = "The file is read-only or was modified. Reopen it.";
 "新建" = "New";
 "暂无资源" = "No resources";
 "更新间隔（小时）" = "Update interval (hours)";
@@ -231,10 +223,6 @@
 "正在连接…" = "Connecting…";
 "此文件不是 UTF-8 文本，请导出后使用外部编辑器。" = "This file is not UTF-8 text. Export it and use an external editor.";
 "混合代理端口" = "Mixed proxy port";
-"演示操作已完成。" = "Preview operation completed.";
-"演示更改仅保存在内存中。" = "Preview changes are kept in memory only.";
-"演示配置" = "Sample profile";
-"演示配置.yaml" = "sample-profile.yaml";
 "端口应为 0–65535 的整数。" = "Port must be an integer from 0 to 65535.";
 "端口应为 1–65535，TUN 设备名称不能为空。" = "Port must be from 1 to 65535, and the TUN device name cannot be empty.";
 "系统网络" = "System network";
@@ -249,10 +237,8 @@
 "订阅内容为只读，请编辑订阅源后更新。" = "Subscription content is read-only. Edit the subscription source and update it.";
 "设备名称" = "Device name";
 "设置已保存到 ZFly。" = "Settings saved to ZFly.";
-"设置已修改，请重新载入。" = "Settings changed. Reload them.";
 "请先创建或选择自定义配置" = "Create or select a custom profile first";
 "请先连接核心。" = "Connect the core first.";
-"请先选择配置。" = "Select a profile first.";
 "请等待当前操作完成。" = "Wait for the current operation to finish.";
 "请等待当前操作完成并连接核心。" = "Wait for the current operation to finish and connect the core.";
 "请等待当前管理操作完成。" = "Wait for the current management operation to finish.";
@@ -262,7 +248,6 @@
 "连接失败：" = "Connection failed: ";
 "选择工具后，执行结果会显示在这里。" = "Choose a tool to show its result here.";
 "选择自定义配置" = "Select custom profile";
-"配置已不存在。" = "The profile no longer exists.";
 "配置已保存。" = "Profile saved.";
 "配置文件不能超过 4 MiB。" = "Profile files cannot exceed 4 MiB.";
 "重新载入会丢弃此分类的未保存更改。" = "Reloading discards unsaved changes in this category.";

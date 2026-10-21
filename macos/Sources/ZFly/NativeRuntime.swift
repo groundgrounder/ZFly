@@ -55,7 +55,8 @@ final class NativeRuntime {
         let error: String?
     }
 
-    func start() async throws -> Connection {
+    func start(preview: Bool = false, previewState: String = "default",
+               environment launchEnvironment: [String: String] = ProcessInfo.processInfo.environment) async throws -> Connection {
         if let process, !process.isRunning {
             self.process = nil
             if let sessionDirectory { try? FileManager.default.removeItem(at: sessionDirectory) }
@@ -63,13 +64,28 @@ final class NativeRuntime {
         }
         guard process == nil, shutdownTask == nil else { throw failure("ZFly 运行时正在启动，请稍候。") }
         guard let resources = Bundle.main.resourceURL else { throw failure("应用资源目录不存在。") }
-        let python = resources.appendingPathComponent("python/bin/python3")
+        var python = resources.appendingPathComponent("python/bin/python3")
         let core = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/ZFlyCore")
-        let runtime = resources.appendingPathComponent("runtime")
+        var runtime = resources.appendingPathComponent("runtime")
+        if preview {
+            let devPython = launchEnvironment["ZFLY_DEV_PYTHON"]
+            let devRuntime = launchEnvironment["ZFLY_DEV_RUNTIME"]
+            if devPython != nil || devRuntime != nil {
+                guard let devPython, let devRuntime, devPython.hasPrefix("/"), devRuntime.hasPrefix("/") else {
+                    throw failure("演示开发运行需要同时设置绝对路径 ZFLY_DEV_PYTHON 和 ZFLY_DEV_RUNTIME。")
+                }
+                python = URL(fileURLWithPath: devPython)
+                runtime = URL(fileURLWithPath: devRuntime)
+            }
+        }
         guard FileManager.default.isExecutableFile(atPath: python.path),
-              FileManager.default.isExecutableFile(atPath: core.path),
-              FileManager.default.fileExists(atPath: runtime.path) else {
-            throw failure("应用缺少内置核心或运行时，请运行 macos/build-app.sh 构建完整的 ZFly.app。")
+              FileManager.default.fileExists(atPath: runtime.appendingPathComponent("zfly_runtime/__main__.py").path) else {
+            throw failure(preview
+                ? "缺少内置演示运行时。直接 swift run 时，请设置 ZFLY_DEV_PYTHON（Python 可执行文件）和 ZFLY_DEV_RUNTIME（包含 zfly_runtime 的目录）的绝对路径。"
+                : "应用缺少内置运行时，请运行 macos/build-app.sh 构建完整的 ZFly.app。")
+        }
+        if !preview && !FileManager.default.isExecutableFile(atPath: core.path) {
+            throw failure("应用缺少内置核心，请运行 macos/build-app.sh 构建完整的 ZFly.app。")
         }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("zfly-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -84,13 +100,21 @@ final class NativeRuntime {
         let readyFile = directory.appendingPathComponent("ready.json")
         let child = Process()
         child.executableURL = python
-        struct Manifest: Decodable { let coreKind: String }
-        let manifestURL = resources.appendingPathComponent("runtime-manifest.json")
-        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
-        child.arguments = ["-B", "-m", "zfly_runtime", "--core", core.path, "--core-kind", manifest.coreKind,
-                           "--resources", resources.appendingPathComponent("geodata").path,
-                           "--ready-file", readyFile.path, "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
-        var environment = ProcessInfo.processInfo.environment
+        var arguments = ["-B", "-m", "zfly_runtime", "--ready-file", readyFile.path,
+                         "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
+        if preview {
+            arguments += ["--preview", "--preview-state", previewState]
+        } else {
+            struct Manifest: Decodable { let coreKind: String }
+            let manifestURL = resources.appendingPathComponent("runtime-manifest.json")
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+            arguments += ["--core", core.path, "--core-kind", manifest.coreKind,
+                          "--resources", resources.appendingPathComponent("geodata").path]
+        }
+        child.arguments = arguments
+        var environment = launchEnvironment
+        environment.removeValue(forKey: "ZFLY_DEV_PYTHON")
+        environment.removeValue(forKey: "ZFLY_DEV_RUNTIME")
         environment["PYTHONPATH"] = runtime.path
         environment["PYTHONNOUSERSITE"] = "1"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -170,6 +194,7 @@ final class NativeRuntime {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var prepareForTermination: (() -> Void)?
+    var previewReady: (() -> Bool)?
     var reopenMainWindow: (() -> Void)?
     private var terminating = false
     private var suppressInitialWindow = false
@@ -250,18 +275,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.setContentSize(NSSize(width: width, height: height))
             window.center()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            guard let view = NSApplication.shared.windows.first(where: { $0.title != "" && $0.isVisible })?.contentView,
-                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-                NSApplication.shared.terminate(nil)
+        Task {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+            while previewReady?() != true, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard previewReady?() == true else {
+                FileHandle.standardError.write(Data("演示截图失败：等待运行时连接和首个快照超时。\n".utf8))
+                await finishPreview()
                 return
             }
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            if let data = bitmap.representation(using: .png, properties: [:]) {
-                try? data.write(to: output, options: .atomic)
+            // Give SwiftUI a layout pass after the first published snapshot.
+            await Task.yield()
+            guard let view = NSApplication.shared.windows.first(where: { $0.title != "" && $0.isVisible })?.contentView,
+                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                await finishPreview()
+                return
             }
-            NSApplication.shared.terminate(nil)
+            view.layoutSubtreeIfNeeded()
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            do {
+                guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+                try data.write(to: output, options: .atomic)
+            } catch {
+                FileHandle.standardError.write(Data(("演示截图写入失败：" + error.localizedDescription + "\n").utf8))
+            }
+            await finishPreview()
         }
+    }
+
+    private func finishPreview() async {
+        // AppKit's termination loop can defer actor jobs when launched by a
+        // render task. Finish the owned runtime's cleanup before entering it.
+        prepareForTermination?()
+        await NativeRuntime.shared.stop()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

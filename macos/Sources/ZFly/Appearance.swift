@@ -28,7 +28,7 @@ enum ZFlyPalette {
 }
 
 struct WindowBackdrop: View {
-    @AppStorage("appearance.ambient") private var ambient = true
+    @AppStorage("appearance.ambient", store: PreviewOptions.preferences) private var ambient = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
 
@@ -45,7 +45,7 @@ struct WindowBackdrop: View {
 }
 
 struct SidebarSurface: ViewModifier {
-    @AppStorage("appearance.glass") private var glass = true
+    @AppStorage("appearance.glass", store: PreviewOptions.preferences) private var glass = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {

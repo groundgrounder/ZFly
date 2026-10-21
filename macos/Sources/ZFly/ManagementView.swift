@@ -485,7 +485,7 @@ private struct NetworkManagement: View {
                         Text("macOS TUN 权限助手尚未内置，当前可使用系统代理。")
                             .font(.caption).foregroundStyle(.secondary)
                         VStack(spacing: 0) {
-                            PreferenceRow("启用 TUN") { Toggle("启用 TUN", isOn: $draft.tunEnabled).toggleStyle(.switch).controlSize(.small).disabled(!store.preview) }
+                            PreferenceRow("启用 TUN") { Toggle("启用 TUN", isOn: $draft.tunEnabled).toggleStyle(.switch).controlSize(.small).disabled(true) }
                             Divider().opacity(0.5)
                             PreferenceRow("协议栈") {
                                 Picker("协议栈", selection: $draft.tunStack) {
@@ -572,7 +572,7 @@ private struct NetworkManagement: View {
                 _ = try await store.manage(command)
                 if command.action == "network.save", let network = store.management?.network { reload(network) }
                 failed = false
-                message = store.preview ? "已保存演示设置" : "设置已保存到 ZFly。"
+                message = "设置已保存到 ZFly。"
             } catch { failed = true; message = error.localizedDescription }
         }
     }

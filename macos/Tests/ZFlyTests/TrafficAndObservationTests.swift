@@ -86,7 +86,7 @@ final class TrafficAndObservationTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor func testPreviewMutationsRetainObservationAndState() async throws {
-        let store = Store(preview: true)
+        let store = try await connectedPreviewStore()
         let state = try XCTUnwrap(store.snapshot)
         let flag = ChangeFlag()
         withObservationTracking { _ = store.snapshot?.configs } onChange: { flag.mark() }
@@ -102,11 +102,11 @@ final class TrafficAndObservationTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor func testDelayChangesDoNotInvalidateManagementViews() async throws {
-        let store = Store(preview: true)
+        let store = try await connectedPreviewStore()
         let flag = ChangeFlag()
         withObservationTracking { _ = store.management } onChange: { flag.mark() }
-        await store.measure(proxy: "test-proxy")
-        XCTAssertNotNil(store.delays["test-proxy"])
+        await store.measure(proxy: "东京 / Tokyo")
+        XCTAssertNotNil(store.delays["东京 / Tokyo"])
         XCTAssertFalse(flag.value)
     }
 

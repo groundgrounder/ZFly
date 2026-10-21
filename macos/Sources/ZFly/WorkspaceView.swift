@@ -150,7 +150,7 @@ struct WorkspaceView: View {
                 guard let document = try await store.perform(command).document else { throw ControllerError.invalidResponse }
                 if drafts[target]?.text == draft.text { drafts[target] = WorkspaceDraft(document: document, text: document.text) }
                 else { drafts[target]?.document = document }
-                if target == key { failed = false; message = store.preview ? "演示更改仅保存在内存中。" : "已保存并提交应用。" }
+                if target == key { failed = false; message = "已保存并提交应用。" }
                 await store.refresh()
             } catch { if target == key { failed = true; message = error.localizedDescription } }
         }

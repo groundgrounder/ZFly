@@ -71,6 +71,24 @@ class FakeCore:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_state_read_during_transaction_returns_committed_snapshot(self):
+        before = self.service.state()
+        entered, release = threading.Event(), threading.Event()
+        def transaction():
+            with self.service.lock:
+                self.service.data["network"]["mode"] = "global"
+                entered.set()
+                release.wait(2)
+        worker = threading.Thread(target=transaction)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(self.service.state(), before)
+        finally:
+            release.set()
+            worker.join()
+        self.assertEqual(self.service.state()["network"]["mode"], "global")
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

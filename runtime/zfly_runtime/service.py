@@ -176,6 +176,7 @@ class Service:
         self.closing = False
         self.operation_receipts = {}
         self.proxy_restore_pending = False
+        self._published_state = self._state()
 
     def start(self):
         self.system_proxy.disable()  # Recover a lease left by a previous crash.
@@ -223,7 +224,16 @@ class Service:
             self.lock.release()
 
     def state(self):
-        with self.lock:
+        # A download/core apply may hold the transaction lock for minutes. Readers
+        # get the last complete state instead of timing out or seeing half a write.
+        if self.lock.acquire(blocking=False):
+            try:
+                self._published_state = self._state()
+            finally:
+                self.lock.release()
+        return copy.deepcopy(self._published_state)
+
+    def _state(self):
             alive = self.core.alive
             return {"apiVersion": 1, "currentProfileID": self.data["currentProfileID"],
                     "running": self.running and alive,

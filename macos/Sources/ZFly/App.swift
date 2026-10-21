@@ -41,7 +41,6 @@ struct ZFlyApp: App {
         Settings {
             AppSettingsView().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
-                .id(store.sessionID)
                 .frame(width: 720, height: 720)
                 .tint(ZFlyPalette.tint)
                 .onChange(of: scheme, initial: true) { _, value in
@@ -153,7 +152,6 @@ private struct MainView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: page)
-                .id(store.sessionID)
                 Divider().opacity(0.5)
                 statusBar
             }

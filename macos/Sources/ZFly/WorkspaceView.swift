@@ -99,7 +99,7 @@ struct WorkspaceView: View {
             .onChange(of: key) { _, _ in message = ""; query = ""; if current == nil { load() } }
             .onChange(of: store.management?.currentProfileID) { _, value in if profileID.isEmpty { profileID = value ?? "" } }
             .onChange(of: store.management?.profiles.map(\.id)) { _, ids in
-                if !profileID.isEmpty, !(ids?.contains(profileID) ?? false) {
+                if let ids, !profileID.isEmpty, !ids.contains(profileID) {
                     profileID = store.management?.currentProfileID ?? ""
                 }
             }

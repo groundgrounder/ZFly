@@ -25,6 +25,7 @@ final class Store {
     private(set) var management: ManagedState?
     private(set) var managementBusy = false
     private(set) var managementStatus = "正在启动本地运行时…"
+    private(set) var managementStale = false
     private(set) var managementEndpoint = ""
     private(set) var sessionID = 0
     private(set) var traffic: [TrafficSample] = []
@@ -118,17 +119,17 @@ final class Store {
         }
     }
 
-    func connect(endpoint: String, secret: String, managementEndpoint: String) throws {
+    func connect(endpoint: String, secret: String, managementEndpoint: String, transport: (any HTTPTransport)? = nil) throws {
         guard !preview else { return }
         guard !busy, !managementBusy else { throw ControllerError.invalidConfig("请等待当前操作完成。") }
         let settings = try ControllerSettings(endpoint: endpoint, secret: secret)
         let managementSettings = try ControllerSettings(endpoint: managementEndpoint, secret: secret)
         generation += 1
         sessionID += 1
-        controller = Controller(settings: settings)
-        managementClient = ManagementClient(settings: managementSettings)
+        controller = Controller(settings: settings, transport: transport ?? SessionTransport())
+        managementClient = ManagementClient(settings: managementSettings, transport: transport ?? SessionTransport(resourceTimeout: 300))
         self.managementEndpoint = managementSettings.endpoint.absoluteString
-        management = nil
+        managementStale = management != nil
         managementStatus = "正在连接 ZFly 运行时…"
         self.endpoint = settings.endpoint.absoluteString
         snapshot = nil
@@ -246,12 +247,13 @@ final class Store {
             let state = try await client.snapshot()
             guard revision == generation, operation == managementRevision, !Task.isCancelled else { return }
             if management != state { management = state }
+            managementStale = false
             if managementStatus != "ZFly 运行时已就绪" { managementStatus = "ZFly 运行时已就绪" }
             updateConnectedStatus()
         } catch {
             guard revision == generation, operation == managementRevision, !Task.isCancelled else { return }
-            management = nil
-            managementStatus = "ZFly 运行时未连接：" + error.localizedDescription
+            managementStale = management != nil
+            managementStatus = "状态可能过期，请重试：" + error.localizedDescription
         }
     }
 
@@ -289,6 +291,7 @@ final class Store {
             let result = try await client.perform(command)
             guard revision == generation else { throw CancellationError() }
             management = result.state
+            managementStale = false
             updateConnectedStatus()
             return result
         } catch {

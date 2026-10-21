@@ -10,6 +10,13 @@ struct ManagementView: View {
 
     var body: some View {
         if let state = store.management {
+            if store.managementStale {
+                HStack {
+                    Text(verbatim: store.managementStatus).foregroundStyle(.orange)
+                    Spacer()
+                    Button("重试") { Task { await store.refreshManagement() } }
+                }.font(.callout).padding(.horizontal, ZFlyMetrics.pagePadding)
+            }
             if network {
                 NetworkManagement(state: state)
             } else {
@@ -141,7 +148,7 @@ private struct ProfileManagement: View {
                 if selected { StatusBadge(title: "使用中", color: ZFlyPalette.tint) }
                 Menu {
                     Button("属性") { editing = profile }
-                    if profile.type != "custom" { Button("查看 / 编辑") { read(profile, export: false) } }
+                    Button(profile.type == "file" ? "查看 / 编辑" : "查看") { read(profile, export: false) }
                     Button("导出") { read(profile, export: true) }
                     Divider()
                     Button("删除", role: .destructive) { deleting = profile }
@@ -266,12 +273,15 @@ private struct ProfileProperties: View {
     @State private var saving = false
     @State private var message: String?
 
+    @State private var revision: String?
+
     init(profile: ManagedProfile?) {
         self.profile = profile
         _label = State(initialValue: profile?.label ?? "")
         _url = State(initialValue: profile?.url ?? "")
         _autoUpdate = State(initialValue: profile?.autoUpdate ?? true)
         _hours = State(initialValue: String(profile?.updateHours ?? 24))
+        _revision = State(initialValue: profile?.revision)
     }
 
     var body: some View {
@@ -288,6 +298,17 @@ private struct ProfileProperties: View {
             }.disabled(saving)
             if let message { Text(LocalizedStringKey(message)).foregroundStyle(.red).font(.callout) }
             HStack {
+                if profile != nil {
+                    Button("重新载入") {
+                        Task {
+                            await store.refreshManagement()
+                            if !store.managementStale, let latest = store.management?.profiles.first(where: { $0.id == profile?.id }) {
+                                label = latest.label; url = latest.url; autoUpdate = latest.autoUpdate
+                                hours = String(latest.updateHours); revision = latest.revision; message = nil
+                            }
+                        }
+                    }.disabled(saving)
+                }
                 if saving { ProgressView().controlSize(.small); Text("正在下载、校验或保存…").font(.caption) }
                 Spacer()
                 Button("取消", role: .cancel) { dismiss() }.disabled(saving)
@@ -314,7 +335,7 @@ private struct ProfileProperties: View {
         }
         var command = ManagementCommand(profile == nil ? "profile.add" : "profile.edit")
         command.id = profile?.id
-        command.revision = profile?.revision
+        command.revision = revision
         command.label = normalizedLabel
         if profile == nil || profile?.type == "url" {
             command.url = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -346,6 +367,9 @@ private struct ProfileEditor: View {
     @State private var saving = false
     @State private var message: String?
     @State private var discarding = false
+    @State private var dirty = false
+
+    private var editable: Bool { document.profile.type == "file" }
 
     init(document: ProfileDocument) {
         self.document = document
@@ -357,16 +381,15 @@ private struct ProfileEditor: View {
             Text(document.profile.label).font(.title2.bold())
             Text(document.profile.type == "file" ? "保存前由核心校验；当前配置保存后重新应用。加密文件请使用外部编辑器。" : "订阅内容为只读，请编辑订阅源后更新。")
                 .font(.callout).foregroundStyle(.secondary)
-            TextEditor(text: $text).font(.system(.body, design: .monospaced)).scrollContentBackground(.hidden)
+            PlainTextEditor(text: $text, editable: editable && !saving)
                 .padding(12).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: ZFlyMetrics.editorRadius, style: .continuous))
-                .disabled(saving || document.profile.type != "file")
             if let message { Text(LocalizedStringKey(message)).foregroundStyle(.red).font(.callout) }
             HStack {
                 Spacer()
                 Button("关闭") {
-                    if text == document.text { dismiss() }
+                    if !dirty { dismiss() }
                     else { discarding = true }
-                }.disabled(saving)
+                }.disabled(saving).keyboardShortcut(.cancelAction)
                 if document.profile.type == "file" {
                     Button(saving ? "校验并保存中…" : "校验并保存") {
                         var command = ManagementCommand("profile.write")
@@ -379,10 +402,11 @@ private struct ProfileEditor: View {
                             do { _ = try await store.manage(command); dismiss() }
                             catch { message = error.localizedDescription }
                         }
-                    }.modifier(ActionStyle(prominent: true)).disabled(saving || store.isBusy || text == document.text)
+                    }.modifier(ActionStyle(prominent: true)).disabled(saving || store.isBusy || !dirty)
                 }
             }
-        }.padding(24).frame(width: 720, height: 600).interactiveDismissDisabled(saving || text != document.text)
+        }.padding(24).frame(width: 720, height: 600).interactiveDismissDisabled(saving || dirty)
+        .onChange(of: text) { _, value in dirty = editable && value != document.text }
         .confirmationDialog("放弃尚未保存的修改？", isPresented: $discarding, titleVisibility: .visible) {
             Button("放弃修改", role: .destructive) { dismiss() }
             Button("继续编辑", role: .cancel) {}

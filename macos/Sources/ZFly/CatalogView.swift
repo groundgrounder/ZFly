@@ -91,6 +91,7 @@ struct CatalogView: View {
     }
 
     private func chooseProfile() {
+        guard store.management != nil else { return }
         if !profiles.contains(where: { $0.id == profileID }) { profileID = profiles.first(where: { $0.id == store.management?.currentProfileID })?.id ?? profiles.first?.id ?? "" }
     }
 

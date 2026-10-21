@@ -15,8 +15,71 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import errno
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+def verify_automatic_groups(action, request):
+    """Healthy direct nodes exercise pin persistence without external traffic."""
+    class Healthy(BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            time.sleep(0.025)
+            self.send_response(204)
+            self.end_headers()
+        do_GET = do_HEAD
+        def log_message(self, *_args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Healthy)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        url = "http://127.0.0.1:" + str(server.server_port)
+        doc = action("workspace.read", section="app")["document"]
+        preferences = json.loads(doc["text"])
+        preferences["testUrl"] = url
+        action("workspace.write", section="app", revision=doc["revision"], text=json.dumps(preferences))
+        groups = ("Auto/% 🧪", "Failover/% 🧪")
+        config = {"proxies": [{"name": node, "type": "direct"} for node in ("A", "B")],
+                  "proxy-groups": [{"name": name, "type": kind, "proxies": ["A", "B"], "url": url,
+                                    "interval": 86400, "lazy": True}
+                                   for name, kind in zip(groups, ("url-test", "fallback"))],
+                  "rules": ["MATCH,DIRECT"]}
+        imported = action("profile.import", label="Automatic groups", data=base64.b64encode(json.dumps(config, ensure_ascii=False).encode()).decode())["state"]
+        identity = next(p["id"] for p in imported["profiles"] if p["label"] == "Automatic groups")
+        action("profile.select", id=identity)
+        for node in ("A", "B"):
+            request("GET", "/proxies/" + node + "/delay?timeout=1000")
+        def check(fixed):
+            proxies = request("GET", "/proxies")["proxies"]
+            for group in groups:
+                value = proxies[group]
+                if (value.get("fixed") or "") != fixed or (fixed and value.get("now") != fixed):
+                    raise RuntimeError("Automatic group verification failed: " + repr({group: value}))
+        for group in groups:
+            action("proxy.select", group=group, proxy="B")
+        check("B")
+        action("tool.run", tool="restart")
+        check("B")
+        created = action("profile.create", label="Switch target")["state"]
+        other = next(p["id"] for p in created["profiles"] if p["label"] == "Switch target")
+        if other == identity:
+            raise RuntimeError("Profile switch did not create another profile")
+        action("profile.select", id=other)
+        action("profile.select", id=identity)
+        check("B")
+        for group in groups:
+            request("DELETE", "/proxies/" + urllib.parse.quote(group, safe=""))
+        check("")
+        action("tool.run", tool="restart")
+        check("")
+        print("PASS: URLTest/Fallback pin, unfix, core restart, profile switch and encoded group names.")
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -144,6 +207,7 @@ def verify(app):
                 raise RuntimeError('Runtime verification failed: (scratch / "data/state.json").stat().st_mode & 0o777 == 0o600')
             if not (not (scratch / "data/proxy-lease.json").exists()):
                 raise RuntimeError('Runtime verification failed: not (scratch / "data/proxy-lease.json").exists()')
+            verify_automatic_groups(action, request)
             print("PASS: owned core start/stop/restart, SOCKS5 handshake, import, selection, persistence, restore, auth and private state.")
             return 0
         finally:

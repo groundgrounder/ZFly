@@ -136,6 +136,10 @@ public struct Controller: Sendable {
         _ = try await perform(settings.request("PUT", segments: ["proxies", group], body: body))
     }
 
+    public func unfix(group: String) async throws {
+        _ = try await perform(settings.request("DELETE", segments: ["proxies", group]))
+    }
+
     public func configure(_ patch: CoreConfig) async throws {
         try patch.validate()
         guard !patch.isEmpty else { return }

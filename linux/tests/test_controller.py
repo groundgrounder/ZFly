@@ -4,7 +4,7 @@ import json
 import unittest
 import urllib.error
 
-from zfly.controller import Controller, ControllerError, validate_config
+from zfly.controller import Controller, ControllerError, PreviewController, validate_config
 
 
 class Response(io.BytesIO):
@@ -14,6 +14,19 @@ class Response(io.BytesIO):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_automatic_pin_preview_and_unfix_encoded_transport(self):
+        preview = PreviewController()
+        preview.select("自动选择", "新加坡")
+        self.assertEqual(preview.snapshot()["proxies"]["proxies"]["自动选择"]["fixed"], "新加坡")
+        preview.unfix("自动选择")
+        self.assertFalse(preview.snapshot()["proxies"]["proxies"]["自动选择"]["fixed"])
+        calls = []
+        def serve(request, _timeout):
+            calls.append((request.method, request.selector))
+            return Response({})
+        self.controller(serve).unfix("Auto/% 🧪")
+        self.assertEqual(calls, [("DELETE", "/proxies/Auto%2F%25%20%F0%9F%A7%AA")])
+
     def controller(self, callback):
         class Opener:
             def open(self, request, timeout):

@@ -105,6 +105,30 @@ class CoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeErrorMessage, "HTTP 500"):
                 core.apply({"mode": "rule"}, {"group": "DIRECT"})
 
+    def test_automatic_pins_apply_on_both_drivers_and_prune_stale_fixed(self):
+        for kind in ("ipc", "mihomo"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                core = Core("/bin/true", Path(directory) / "home", "secret", kind=kind)
+                calls = []
+                core.call = lambda *args: calls.append(args)
+                def request(method, path, data=None):
+                    calls.append((method, path))
+                    if path == "/proxies":
+                        return 200, json.dumps({"proxies": {
+                            "Auto": {"type": "URLTest", "all": ["provider-node"], "fixed": "provider-node"},
+                            "Failover": {"type": "Fallback", "all": ["provider-node"], "fixed": "removed"}
+                        }}).encode()
+                    return 204, b""
+                core.request = request
+                selections = {"Auto": "provider-node", "Failover": "removed"}
+                core.apply({"mode": "rule"}, selections)
+                self.assertEqual(selections, {"Auto": "provider-node"})
+                if kind == "ipc":
+                    self.assertIn(("DELETE", "/proxies/Failover"), calls)
+                    self.assertFalse(any(call[:2] == ("PUT", "/proxies/Auto") for call in calls))
+                else:
+                    self.assertIn(("PUT", "/proxies/Auto"), calls)
+
 
 if __name__ == "__main__":
     unittest.main()

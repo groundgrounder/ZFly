@@ -156,6 +156,9 @@ class Controller:
     def select(self, group, proxy):
         self._request("PUT", "proxies", group, body={"name": proxy})
 
+    def unfix(self, group):
+        self._request("DELETE", "proxies", group)
+
     def delay(self, proxy):
         result = self._request(
             "GET", "proxies", proxy, "delay",
@@ -203,7 +206,13 @@ class PreviewController:
         self._data["configs"].update(patch)
 
     def select(self, group, proxy):
-        self._data["proxies"]["proxies"][group]["now"] = proxy
+        item = self._data["proxies"]["proxies"][group]
+        item["now"] = proxy
+        if item["type"] in ("URLTest", "Fallback"):
+            item["fixed"] = proxy
+
+    def unfix(self, group):
+        self._data["proxies"]["proxies"][group]["fixed"] = ""
 
     def delay(self, proxy):
         history = self._data["proxies"]["proxies"][proxy].get("history") or []

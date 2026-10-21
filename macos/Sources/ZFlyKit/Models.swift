@@ -109,10 +109,13 @@ public struct ProxyInfo: Decodable, Equatable, Sendable {
     public let type: String
     public let all: [String]?
     public var now: String?
+    public var fixed: String?
     public let history: [DelayInfo]?
     public let hidden: Bool?
 
     public var lastDelay: Int? { history?.last?.delay }
+    public var isAutomatic: Bool { type == "URLTest" || type == "Fallback" }
+    public var canSelect: Bool { type == "Selector" || isAutomatic }
 }
 
 public struct DelayInfo: Decodable, Equatable, Sendable {

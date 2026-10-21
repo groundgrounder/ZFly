@@ -274,7 +274,7 @@ class PreviewManagement:
                 raise ControllerError("文件只读或已被修改，请重新打开。")
             data = self._decode_file(command.get("data"))
             self._files[profile["id"]] = {"name": "演示配置.yaml", "data": data, "revision": hashlib.md5(base64.b64decode(data, validate=True)).hexdigest()}
-        elif action in ("proxy.select", "tool.run"):
+        elif action in ("proxy.select", "proxy.unfix", "tool.run"):
             if action == "tool.run" and command.get("tool") not in ("apply", "restart", "gc", "closeConnections", "updateProfiles", "updateResources", "updateProvider", "backupLocal", "testDAV", "backupDAV", "restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll"):
                 raise ControllerError("不支持的工具操作。")
             return {"state": self.snapshot(), "message": "演示操作已完成。"}

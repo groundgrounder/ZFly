@@ -268,8 +268,11 @@ class Core:
             proxies = json.loads(self.request("GET", "/proxies")[1])["proxies"]
             for group, proxy in list(selections.items()):
                 current = proxies.get(group, {})
-                if current.get("type") != "Selector" or proxy not in current.get("all", []):
+                if current.get("type") not in ("Selector", "URLTest", "Fallback") or proxy not in current.get("all", []):
                     del selections[group]
+                    if self.kind == "ipc" and current.get("type") in ("URLTest", "Fallback") and current.get("fixed"):
+                        from urllib.parse import quote
+                        self.request("DELETE", "/proxies/" + quote(group, safe=""))
                     continue
                 if self.kind != "ipc":
                     from urllib.parse import quote

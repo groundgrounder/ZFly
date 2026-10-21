@@ -49,6 +49,7 @@ class FakeCore:
         self.last_config = None
         self.applies = []
         self.selected = "DIRECT"
+        self.automatic = {}
         self.fail_next = False
 
     def validate(self, _content):
@@ -63,9 +64,16 @@ class FakeCore:
 
     def request(self, method, path, data=None):
         if method == "GET" and path == "/proxies":
-            return 200, json.dumps({"proxies": {"选择": {"type": "Selector", "all": ["DIRECT", "REJECT"], "now": self.selected}}}).encode()
+            return 200, json.dumps({"proxies": {"选择": {"type": "Selector", "all": ["DIRECT", "REJECT"], "now": self.selected}, **self.automatic}}).encode()
         if method == "PUT" and path.startswith("/proxies/"):
+            name = urllib.parse.unquote(path[len("/proxies/"):])
+            if name in self.automatic:
+                self.automatic[name]["fixed"] = self.automatic[name]["now"] = json.loads(data)["name"]
+                return 204, b""
             self.selected = json.loads(data)["name"]
+            return 204, b""
+        if method == "DELETE" and path.startswith("/proxies/"):
+            self.automatic[urllib.parse.unquote(path[len("/proxies/"):])]["fixed"] = ""
             return 204, b""
         return 200, b"{}"
 
@@ -357,6 +365,35 @@ class RuntimeTests(unittest.TestCase):
             self.service.perform({"action": "proxy.select", "group": "选择", "proxy": "DIRECT"})
         self.assertEqual(self.core.selected, "REJECT")
         self.assertEqual(self.service.data["selections"][identity]["选择"], "REJECT")
+
+    def test_automatic_fixed_and_unfixed_selections_rollback_and_relay(self):
+        identity = self.create()
+        for kind in ("URLTest", "Fallback"):
+            with self.subTest(kind=kind):
+                group = kind + "/% 🧪"
+                path = "/proxies/" + urllib.parse.quote(group, safe="")
+                item = self.core.automatic[group] = {"type": kind, "all": ["DIRECT", "REJECT"], "now": "DIRECT", "fixed": ""}
+                self.storage.fail = True
+                with self.assertRaises(OSError):
+                    self.service.perform({"action": "proxy.select", "group": group, "proxy": "REJECT"})
+                self.assertEqual(item["fixed"], "")  # Never restore 'now' as a manual pin.
+                self.assertNotIn(group, self.service.data["selections"].get(identity, {}))
+                self.storage.fail = False
+                self.service.relay("PUT", path, b'{"name":"REJECT"}')
+                self.assertEqual(item["fixed"], "REJECT")
+                self.assertEqual(self.storage.saved["selections"][identity][group], "REJECT")
+                self.storage.fail = True
+                with self.assertRaises(OSError):
+                    self.service.relay("DELETE", path)
+                self.assertEqual(item["fixed"], "REJECT")
+                self.assertEqual(self.service.data["selections"][identity][group], "REJECT")
+                self.storage.fail = False
+                self.service.relay("DELETE", path)
+                self.assertEqual(item["fixed"], "")
+                self.assertNotIn(group, self.storage.saved["selections"][identity])
+        for group in ("选择", "missing"):
+            with self.assertRaises(RuntimeErrorMessage):
+                self.service.perform({"action": "proxy.unfix", "group": group})
 
     def test_stale_profile_and_workspace_writes_are_rejected(self):
         identity = self.create()

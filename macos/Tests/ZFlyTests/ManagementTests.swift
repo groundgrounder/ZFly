@@ -64,6 +64,25 @@ private actor ProxyTransport: HTTPTransport {
 }
 
 extension ManagementTests {
+    @MainActor func testAutomaticPinAndUnfixInPreview() async throws {
+        let fallback = try JSONDecoder().decode(ProxyInfo.self, from: Data(#"{"type":"Fallback","fixed":"B","now":"B","all":["A","B"]}"#.utf8))
+        XCTAssertTrue(fallback.isAutomatic)
+        XCTAssertTrue(fallback.canSelect)
+        XCTAssertEqual(fallback.fixed, "B")
+        let store = Store(preview: true)
+        await store.refreshManagement()
+        await store.refresh()
+        await store.select(group: "自动选择", proxy: "新加坡")
+        let group = try XCTUnwrap(store.snapshot?.proxies.proxies["自动选择"])
+        XCTAssertTrue(group.canSelect)
+        XCTAssertTrue(group.isAutomatic)
+        XCTAssertEqual(group.fixed, "新加坡")
+        XCTAssertEqual(group.now, "新加坡")
+        await store.unfix(group: "自动选择")
+        XCTAssertNil(store.snapshot?.proxies.proxies["自动选择"]?.fixed)
+        XCTAssertNil(store.actionError)
+    }
+
     func testProxyGroupsFollowGlobalOrderAndVisibility() throws {
         let data = Data(#"{"proxies":{"GLOBAL":{"type":"Selector","all":["Z","hidden","A","DIRECT"]},"A":{"type":"Selector","all":[]},"Z":{"type":"URLTest","all":[]},"hidden":{"type":"Selector","all":[],"hidden":true}}}"#.utf8)
         let proxies = try JSONDecoder().decode(ProxyResponse.self, from: data)

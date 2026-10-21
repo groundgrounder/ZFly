@@ -259,6 +259,9 @@ class Window(Adw.ApplicationWindow):
         top.append(label("代理组", "title-1", hexpand=True))
         self.measure_button = action_button("整组测速", self.measure_group)
         top.append(self.measure_button)
+        self.unfix_button = action_button("恢复自动", self.unfix_group)
+        self.unfix_button.set_visible(False)
+        top.append(self.unfix_button)
         proxies.append(top)
         self.group_picker = Adw.ComboRow(title="当前代理组")
         picker_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -714,6 +717,7 @@ class Window(Adw.ApplicationWindow):
         self.measure_button.set_label("取消测速" if selected_group and selected_group.get_string() in self.measurements else "整组测速")
         self.proxy_empty.set_visible(False)
         self.proxy_no_results.set_visible(False)
+        self.unfix_button.set_visible(False)
         if not self.data:
             return
         clear(self.proxy_list)
@@ -730,9 +734,12 @@ class Window(Adw.ApplicationWindow):
             self.last_proxies = None
             self._render_lists(force=True)
             return
-        manual = group["type"] == "Selector"
+        automatic = group["type"] in ("URLTest", "Fallback")
+        manual = group["type"] == "Selector" or automatic
+        self.unfix_button.set_visible(automatic and bool(group.get("fixed")))
+        self.unfix_button.set_sensitive(not self.busy and self.connected)
         members = group.get("all", [])
-        self.group_note.set_label(f"{len(members)} 个节点 · " + ("手动选择，立即生效" if manual else "由核心自动选择节点"))
+        self.group_note.set_label(f"{len(members)} 个节点 · " + ("自动选择，可手动固定" if automatic else "手动选择，立即生效" if manual else "由核心选择"))
         query = self.search.get_text().casefold()
         names = [proxy for proxy in members if query in name.casefold() or query in proxy.casefold()]
         self.proxy_list.set_visible(bool(names))
@@ -744,7 +751,7 @@ class Window(Adw.ApplicationWindow):
             delay = self.delays.get(proxy, history[-1].get("delay") if history else None)
             error = self.delay_errors.get(proxy)
             delay_text = "测速中…" if proxy in self.measuring else "测速失败" if error else "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
-            row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy'))
+            row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy') + (" · 已固定" if automatic and group.get("fixed") == proxy else ""))
             row.set_use_markup(False)
             row.set_title_lines(1)
             row.set_subtitle_lines(1)
@@ -758,8 +765,8 @@ class Window(Adw.ApplicationWindow):
             row.add_suffix(latency)
             row.add_suffix(action_button("取消" if proxy in self.measuring else "测速", lambda proxy=proxy: self.measure_proxy(proxy)))
             if manual:
-                button = action_button("已选" if group.get("now") == proxy else "选择", lambda proxy=proxy: self._action("select", name, proxy))
-                button.set_sensitive(group.get("now") != proxy)
+                button = action_button("已固定" if automatic and group.get("fixed") == proxy else "固定" if automatic else "已选" if group.get("now") == proxy else "选择", lambda proxy=proxy: self._action("select", name, proxy))
+                button.set_sensitive(group.get("fixed" if automatic else "now") != proxy)
                 row.add_suffix(button)
             self.proxy_list.append(row)
         if len(names) > 200:
@@ -803,10 +810,13 @@ class Window(Adw.ApplicationWindow):
 
         def work():
             state = None
-            if method == "select" and management:
-                state = management.perform({"action": "proxy.select", "group": args[0], "proxy": args[1]})["state"]
+            if method in ("select", "unfix") and management:
+                command = {"action": "proxy." + method, "group": args[0]}
+                if method == "select":
+                    command["proxy"] = args[1]
+                state = management.perform(command)["state"]
                 if self.preview:
-                    controller.select(*args)
+                    getattr(controller, method)(*args)
                 value = None
             else:
                 value = getattr(controller, method)(*args)
@@ -832,6 +842,11 @@ class Window(Adw.ApplicationWindow):
             self._render_proxies()
             return
         self._measure([name], scope)
+
+    def unfix_group(self):
+        selected = self.group_picker.get_selected_item()
+        if selected:
+            self._action("unfix", selected.get_string())
 
     def measure_group(self):
         if not self.controller or not self.data:

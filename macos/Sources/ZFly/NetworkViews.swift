@@ -46,10 +46,15 @@ struct ProxiesView: View {
                     HStack(spacing: 6) {
                         Text(group.type)
                         Text("·")
-                        Text(group.type == "Selector" ? "手动选择" : "自动管理")
+                        Text(group.type == "Selector" ? "手动选择" : group.isAutomatic ? "自动选择，可手动固定" : "由核心选择")
+                        if let fixed = group.fixed, !fixed.isEmpty { Text("已固定") }
                     }.font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
+                if group.isAutomatic, let fixed = group.fixed, !fixed.isEmpty {
+                    Button("恢复自动") { Task { await store.unfix(group: name) } }
+                        .disabled(store.isBusy || !store.connected)
+                }
                 if store.measuringGroups.contains(name) {
                     ProgressView().controlSize(.small)
                     Button("取消测速") { store.cancelMeasurement(group: name) }
@@ -82,7 +87,7 @@ private struct ProxyCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if group.type == "Selector" && !selected {
+            if group.canSelect && (!selected || group.isAutomatic) {
                 Button { Task { await store.select(group: groupName, proxy: name) } } label: { identity }
                     .buttonStyle(.plain).disabled(store.isBusy || !store.connected)
                     .accessibilityLabel(Text(name))
@@ -119,6 +124,9 @@ private struct ProxyCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(store.snapshot?.proxies.proxies[name]?.type ?? "Proxy")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
+                if group.isAutomatic && group.fixed == name {
+                    Text("已固定").font(.system(size: 10)).foregroundStyle(ZFlyPalette.tint)
+                }
             }
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 15)).foregroundStyle(selected ? ZFlyPalette.tint : Color.primary.opacity(0.15))

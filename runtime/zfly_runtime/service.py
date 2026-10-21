@@ -499,7 +499,9 @@ class Service:
                 result, reapply, persist = self._command(command, downloaded=downloaded)
                 selection = result.pop("selection", None)
                 if selection:
-                    self.core.request("PUT", "/proxies/" + urllib.parse.quote(selection["group"], safe=""), json.dumps({"name": selection["proxy"]}).encode())
+                    self.core.request("PUT" if selection["proxy"] else "DELETE",
+                                      "/proxies/" + urllib.parse.quote(selection["group"], safe=""),
+                                      json.dumps({"name": selection["proxy"]}).encode() if selection["proxy"] else None)
                 if persist:
                     try:
                         validate_state(self.data)
@@ -524,9 +526,11 @@ class Service:
             except Exception:
                 self.data = old
                 self._profile_revisions.clear()
-                if selection and selection["previous"]:
+                if selection:
                     try:
-                        self.core.request("PUT", "/proxies/" + urllib.parse.quote(selection["group"], safe=""), json.dumps({"name": selection["previous"]}).encode())
+                        self.core.request("PUT" if selection["previous"] else "DELETE",
+                                          "/proxies/" + urllib.parse.quote(selection["group"], safe=""),
+                                          json.dumps({"name": selection["previous"]}).encode() if selection["previous"] else None)
                     except RuntimeErrorMessage:
                         self.last_error = "节点选择保存失败，核心选择还原失败。请重新应用配置。"
                 if applied:
@@ -566,16 +570,26 @@ class Service:
             if type(c.get("running")) is not bool:
                 raise RuntimeErrorMessage("运行状态无效。")
             return {"running": c["running"]}, True, False
-        if action == "proxy.select":
+        if action in ("proxy.select", "proxy.unfix"):
             group, proxy = c.get("group"), c.get("proxy")
+            if not isinstance(group, str) or (action == "proxy.select" and not isinstance(proxy, str)):
+                raise RuntimeErrorMessage("代理组或节点格式无效。")
             status, body = self.core.request("GET", "/proxies")
             item = json.loads(body).get("proxies", {}).get(group, {})
-            if item.get("type") != "Selector" or proxy not in item.get("all", []):
+            automatic = item.get("type") in ("URLTest", "Fallback")
+            if (action == "proxy.unfix" and not automatic) or (action == "proxy.select" and
+                    (item.get("type") not in ("Selector", "URLTest", "Fallback") or proxy not in item.get("all", []))):
                 raise RuntimeErrorMessage("代理组或节点已变化，请刷新。")
             if not self.data["currentProfileID"]:
                 raise RuntimeErrorMessage("请先选择配置。")
-            self.data["selections"].setdefault(self.data["currentProfileID"], {})[group] = proxy
-            return {"selection": {"group": group, "proxy": proxy, "previous": item.get("now")}}, False, True
+            selections = self.data["selections"].setdefault(self.data["currentProfileID"], {})
+            if action == "proxy.unfix":
+                selections.pop(group, None)
+                proxy = None
+            else:
+                selections[group] = proxy
+            return {"selection": {"group": group, "proxy": proxy,
+                                  "previous": item.get("fixed") if automatic else item.get("now")}}, False, True
         if action.startswith("workspace."):
             return self._workspace(c)
         if action.startswith("catalog."):
@@ -1054,6 +1068,9 @@ class Service:
                        or route.startswith(("/proxies/", "/providers/proxies/", "/providers/rules/"))))
             allowed = allowed or (method == "DELETE" and (route == "/connections" or route.startswith("/connections/")))
             allowed = allowed or (method == "POST" and route in ("/cache/dns/flush", "/cache/fakeip/flush"))
+            if method == "DELETE" and route.startswith("/proxies/") and "/" not in route[len("/proxies/"):]:
+                self.perform({"action": "proxy.unfix", "group": urllib.parse.unquote(route[len("/proxies/"):])})
+                return 204, b""
             if method == "PUT" and route.startswith("/proxies/") and "/" not in route[len("/proxies/"):]:
                 try:
                     selection = json.loads(body)

@@ -368,7 +368,12 @@ final class Store {
                 throw ControllerError.invalidConfig("配置文件编码无效。")
             }
             previewFiles[command.id ?? ""] = ManagedFile(name: "演示配置.yaml", data: data, revision: UUID().uuidString)
-        case "proxy.select": snapshot?.proxies.proxies[command.group ?? ""]?.now = command.proxy
+        case "proxy.select":
+            snapshot?.proxies.proxies[command.group ?? ""]?.now = command.proxy
+            if snapshot?.proxies.proxies[command.group ?? ""]?.isAutomatic == true {
+                snapshot?.proxies.proxies[command.group ?? ""]?.fixed = command.proxy
+            }
+        case "proxy.unfix": snapshot?.proxies.proxies[command.group ?? ""]?.fixed = nil
         case "tool.run":
             guard ["apply", "restart", "gc", "closeConnections", "updateProfiles", "updateResources", "updateProvider", "backupLocal", "testDAV", "backupDAV", "restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll"].contains(command.tool ?? "") else {
                 throw ControllerError.invalidConfig("不支持的工具操作。")
@@ -443,6 +448,16 @@ final class Store {
             return
         }
         await act { try await $0.select(group: group, proxy: proxy) }
+    }
+
+    func unfix(group: String) async {
+        if management != nil {
+            var command = ManagementCommand("proxy.unfix"); command.group = group
+            do { _ = try await manage(command); await refresh() }
+            catch { actionError = error.localizedDescription }
+            return
+        }
+        await act { try await $0.unfix(group: group) }
     }
 
     func setMode(_ mode: String) async throws {

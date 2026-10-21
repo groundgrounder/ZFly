@@ -1,3 +1,4 @@
+from .proxy_model import group_names
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -51,6 +52,9 @@ class Window(Adw.ApplicationWindow):
         self.delays = {}
         self.delay_errors = {}
         self.delay_scope = None
+        self.measuring = set()
+        self.measurements = {}
+        self.pending_refresh = False
         self.busy = False
         self.refreshing = False
         self.operation_revision = 0
@@ -508,6 +512,8 @@ class Window(Adw.ApplicationWindow):
                     self._sensitivity()
                     self.workspace_panel.resume()
                     self.catalog_panel.resume()
+                    if self.pending_refresh and not self.busy and not self.refreshing:
+                        self.refresh()
             return GLib.SOURCE_REMOVE
 
         def work():
@@ -528,6 +534,10 @@ class Window(Adw.ApplicationWindow):
     def refresh(self):
         if not self.controller:
             return
+        if self.refreshing or self.busy:
+            self.pending_refresh = True
+            return
+        self.pending_refresh = False
         controller, management = self.controller, self.management_client
         def work():
             try:
@@ -542,7 +552,8 @@ class Window(Adw.ApplicationWindow):
             return data, core_error, state, status
         def receive(result):
             data, core_error, state, status = result
-            self.set_management_state(state)
+            if state is not None:
+                self.set_management_state(state)
             self.management_status = status
             if data:
                 self._receive(data)
@@ -615,7 +626,7 @@ class Window(Adw.ApplicationWindow):
             self.catalog_panel.receive()
             if not command["action"].endswith((".read", ".list")):
                 self.toast("已更新演示数据" if self.preview else "操作已完成。")
-            if restored:
+            if not command["action"].endswith((".read", ".list")):
                 self.refresh()
         accepted = self._submit(lambda: management.perform(command), apply, action=True,
                                 done=complete, on_error=on_error, background=background)
@@ -666,16 +677,14 @@ class Window(Adw.ApplicationWindow):
         if not self.data:
             return
         proxies = self.data["proxies"]["proxies"]
-        groups = sorted((name for name, proxy in proxies.items() if proxy.get("all") is not None),
-                        key=lambda name: (proxies[name].get("type") != "Selector", name))
+        groups = group_names(proxies, self.data["configs"].get("mode", "rule"), self.search.get_text())
         model = self.group_picker.get_model()
         old_names = [model.get_string(i) for i in range(model.get_n_items())] if model else []
         if groups != old_names:
             current = self.group_picker.get_selected_item()
             selected = current.get_string() if current else None
             self.group_picker.set_model(Gtk.StringList.new(groups))
-            if selected in groups:
-                self.group_picker.set_selected(groups.index(selected))
+            self.group_picker.set_selected(groups.index(selected) if selected in groups else 0)
         if self.page == "代理组" and (force or proxies != self.last_proxies):
             self._render_proxies()
             self.last_proxies = proxies
@@ -686,6 +695,8 @@ class Window(Adw.ApplicationWindow):
         self._update_overview()
 
     def _render_proxies(self):
+        selected_group = self.group_picker.get_selected_item()
+        self.measure_button.set_label("取消测速" if selected_group and selected_group.get_string() in self.measurements else "整组测速")
         self.proxy_empty.set_visible(False)
         self.proxy_no_results.set_visible(False)
         if not self.data:
@@ -701,13 +712,14 @@ class Window(Adw.ApplicationWindow):
         proxies = self.data["proxies"]["proxies"]
         group = proxies.get(name)
         if group is None:
-            self.group_note.set_label("代理组已变化，请重新选择。")
+            self.last_proxies = None
+            self._render_lists(force=True)
             return
         manual = group["type"] == "Selector"
         members = group.get("all", [])
         self.group_note.set_label(f"{len(members)} 个节点 · " + ("手动选择，立即生效" if manual else "由核心自动选择节点"))
         query = self.search.get_text().casefold()
-        names = [proxy for proxy in members if query in proxy.casefold()]
+        names = [proxy for proxy in members if query in name.casefold() or query in proxy.casefold()]
         self.proxy_list.set_visible(bool(names))
         self.proxy_empty.set_visible(not members)
         self.proxy_no_results.set_visible(bool(members) and not names)
@@ -716,7 +728,7 @@ class Window(Adw.ApplicationWindow):
             history = info.get("history") or []
             delay = self.delays.get(proxy, history[-1].get("delay") if history else None)
             error = self.delay_errors.get(proxy)
-            delay_text = "测速失败" if error else "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
+            delay_text = "测速中…" if proxy in self.measuring else "测速失败" if error else "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
             row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy'))
             row.set_use_markup(False)
             row.set_title_lines(1)
@@ -729,7 +741,7 @@ class Window(Adw.ApplicationWindow):
             if error:
                 latency.set_tooltip_text(error)
             row.add_suffix(latency)
-            row.add_suffix(action_button("测速", lambda proxy=proxy: self._action("delay", proxy)))
+            row.add_suffix(action_button("取消" if proxy in self.measuring else "测速", lambda proxy=proxy: self.measure_proxy(proxy)))
             if manual:
                 button = action_button("已选" if group.get("now") == proxy else "选择", lambda proxy=proxy: self._action("select", name, proxy))
                 button.set_sensitive(group.get("now") != proxy)
@@ -762,6 +774,9 @@ class Window(Adw.ApplicationWindow):
             self.connection_list.append(row)
 
     def _action(self, method, *args):
+        if method == "delay":
+            self.measure_proxy(args[0])
+            return
         if not self.connected or not self.controller:
             return
         controller = self.controller
@@ -790,36 +805,71 @@ class Window(Adw.ApplicationWindow):
 
         self._submit(work, receive, action=True)
 
+    def measure_proxy(self, name):
+        scope = "node:" + name
+        if scope in self.measurements:
+            self.measurements[scope].set()
+            self.measuring.discard(name)
+            self._render_proxies()
+            return
+        self._measure([name], scope)
+
     def measure_group(self):
         if not self.controller or not self.data:
             return
         selected = self.group_picker.get_selected_item()
         if not selected:
             return
-        members = self.data["proxies"]["proxies"].get(selected.get_string(), {}).get("all") or []
-        controller = self.controller
-        def measure(name):
-            try:
-                return name, controller.delay(name), None
-            except ControllerError as error:
-                return name, None, str(error)
-        def work():
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                return list(pool.map(measure, members))
-        def receive(results):
-            failed = 0
-            for name, delay, error in results:
+        name = selected.get_string()
+        if name in self.measurements:
+            self.measurements[name].set()
+            return
+        members = self.data["proxies"]["proxies"].get(name, {}).get("all") or []
+        self._measure(members, name)
+
+    def _measure(self, members, scope):
+        if not self.controller or self.closed:
+            return
+        cancel, controller, generation = threading.Event(), self.controller, self.generation
+        self.measurements[scope] = cancel
+        def finish(name, delay, error):
+            if self.closed or generation != self.generation:
+                return GLib.SOURCE_REMOVE
+            self.measuring.discard(name)
+            if not cancel.is_set():
                 if error:
-                    self.delays.pop(name, None)
                     self.delay_errors[name] = error
-                    failed += 1
                 else:
                     self.delays[name] = delay
                     self.delay_errors.pop(name, None)
             self._render_proxies()
-            if failed:
-                self.toast(f"{failed} 个节点测速请求失败，可重试；节点状态尚未确认。")
-        self._submit(work, receive, action=True)
+            return GLib.SOURCE_REMOVE
+        def measure(name):
+            if cancel.is_set():
+                return
+            GLib.idle_add(mark, name)
+            try:
+                delay, error = controller.delay(name), None
+            except ControllerError as error_value:
+                delay, error = None, str(error_value)
+            GLib.idle_add(finish, name, delay, error)
+        def mark(name):
+            if not self.closed and generation == self.generation and not cancel.is_set():
+                self.measuring.add(name)
+                self._render_proxies()
+            return GLib.SOURCE_REMOVE
+        def completed():
+            if self.measurements.get(scope) is cancel:
+                self.measurements.pop(scope, None)
+            if not self.closed:
+                self._render_proxies()
+            return GLib.SOURCE_REMOVE
+        def work():
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(measure, dict.fromkeys(members)))
+            GLib.idle_add(completed)
+        threading.Thread(target=work, daemon=True, name="zfly-latency").start()
+        self._render_proxies()
 
     def settings(self):
         dialog = Adw.MessageDialog(transient_for=self, modal=True, heading="ZFly 独立运行时",

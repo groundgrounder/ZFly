@@ -110,6 +110,7 @@ public struct ProxyInfo: Decodable, Equatable, Sendable {
     public let all: [String]?
     public var now: String?
     public let history: [DelayInfo]?
+    public let hidden: Bool?
 
     public var lastDelay: Int? { history?.last?.delay }
 }
@@ -123,6 +124,12 @@ public struct ProxyResponse: Decodable, Equatable, Sendable {
 
     public var groupNames: [String] {
         proxies.keys.filter { proxies[$0]?.all != nil }.sorted()
+    }
+
+    public func groupNames(mode: String) -> [String] {
+        let groups = groupNames.filter { proxies[$0]?.hidden != true && ($0 != "GLOBAL" || mode == "global") }
+        let order = proxies["GLOBAL"]?.all ?? []
+        return order.filter { groups.contains($0) } + groups.filter { !order.contains($0) }
     }
 }
 

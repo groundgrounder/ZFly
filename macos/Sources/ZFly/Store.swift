@@ -21,6 +21,10 @@ final class Store {
     private(set) var dataDirectory = ""
     private(set) var updated: Date?
     private(set) var delays: [String: Int] = [:]
+    private(set) var measuring: Set<String> = []
+    private(set) var measuringGroups: Set<String> = []
+    @ObservationIgnored private var delayTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var groupTasks: [String: Task<Void, Never>] = [:]
     var actionError: String?
     private(set) var management: ManagedState?
     private(set) var managementBusy = false
@@ -54,6 +58,8 @@ final class Store {
     }
 
     func stopPolling() {
+        for task in delayTasks.values { task.cancel() }
+        for task in groupTasks.values { task.cancel() }
         generation += 1
         pollingTask?.cancel()
         pollingTask = nil
@@ -161,7 +167,13 @@ final class Store {
     }
 
     func refresh(full: Bool = true) async {
-        guard !preview, !refreshing, !busy, !managementBusy, let controller else { return }
+        guard !preview else { return }
+        // An action can invalidate an in-flight poll. Wait for it, then fetch a
+        // complete post-action snapshot instead of dropping the refresh request.
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
+        }
+        guard !busy, !managementBusy, let controller else { return }
         refreshing = true
         let revision = generation
         let operation = coreRevision
@@ -473,13 +485,26 @@ final class Store {
     }
 
     func measure(proxy: String) async {
+        guard !measuring.contains(proxy), !Task.isCancelled else { return }
         if preview { delays[proxy] = snapshot?.proxies.proxies[proxy]?.lastDelay ?? 42; return }
+        guard let controller else { return }
         let revision = generation
-        await act { [weak self] controller in
-            let delay = try await controller.delay(proxy: proxy)
-            if self?.generation == revision { self?.delays[proxy] = delay }
+        measuring.insert(proxy)
+        let task = Task {
+            defer { measuring.remove(proxy); delayTasks.removeValue(forKey: proxy) }
+            do {
+                let delay = try await controller.delay(proxy: proxy)
+                if generation == revision, !Task.isCancelled { delays[proxy] = delay }
+            } catch {
+                if generation == revision, !Task.isCancelled { delays[proxy] = 0 }
+            }
         }
+        delayTasks[proxy] = task
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
+
+    func cancelMeasurement(proxy: String) { delayTasks[proxy]?.cancel() }
+    func cancelMeasurement(group: String) { groupTasks[group]?.cancel() }
 
     func close(connection: String) async {
         if preview { snapshot?.connections.connections?.removeAll { $0.id == connection }; return }
@@ -507,24 +532,24 @@ final class Store {
         return try await controller.inspect(tool, name: name, type: type)
     }
 
-    func measureGroup(_ names: [String]) async {
-        if preview { for name in names { delays[name] = snapshot?.proxies.proxies[name]?.lastDelay ?? 42 }; return }
-        let revision = generation
-        await act { [weak self] controller in
-            let values = await withTaskGroup(of: (String, Int).self, returning: [String: Int].self) { group in
-                var iterator = names.makeIterator()
+    func measureGroup(_ names: [String], name: String = "group") async {
+        guard !measuringGroups.contains(name) else { return }
+        measuringGroups.insert(name)
+        let task = Task {
+            defer { measuringGroups.remove(name); groupTasks.removeValue(forKey: name) }
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = Array(Set(names)).makeIterator()
                 for _ in 0..<min(4, names.count) {
-                    if let name = iterator.next() { group.addTask { (name, (try? await controller.delay(proxy: name)) ?? 0) } }
+                    if let proxy = iterator.next() { group.addTask { await self.measure(proxy: proxy) } }
                 }
-                var result: [String: Int] = [:]
-                for await (name, delay) in group {
-                    result[name] = delay
-                    if let next = iterator.next() { group.addTask { (next, (try? await controller.delay(proxy: next)) ?? 0) } }
+                for await _ in group {
+                    if Task.isCancelled { group.cancelAll(); break }
+                    if let proxy = iterator.next() { group.addTask { await self.measure(proxy: proxy) } }
                 }
-                return result
             }
-            if self?.generation == revision { self?.delays.merge(values) { _, new in new } }
         }
+        groupTasks[name] = task
+        await task.value
     }
 
     func configure(_ draft: CoreConfig, baseline: CoreConfig) async throws {

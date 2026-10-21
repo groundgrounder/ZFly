@@ -5,7 +5,7 @@ struct ProxiesView: View {
     @Environment(Store.self) private var store
     @State private var search = PreviewOptions.value("--preview-query") ?? ""
 
-    private var names: [String] { store.snapshot?.proxies.groupNames ?? [] }
+    private var names: [String] { store.snapshot?.proxies.groupNames(mode: store.snapshot?.configs.mode ?? "rule") ?? [] }
     private var filteredGroups: [String] {
         names.filter { name in
             search.isEmpty || name.localizedCaseInsensitiveContains(search)
@@ -50,8 +50,13 @@ struct ProxiesView: View {
                     }.font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                Button("整组测速", systemImage: "bolt") { Task { await store.measureGroup(group.all ?? []) } }
-                    .disabled(store.isBusy || !store.connected)
+                if store.measuringGroups.contains(name) {
+                    ProgressView().controlSize(.small)
+                    Button("取消测速") { store.cancelMeasurement(group: name) }
+                } else {
+                    Button("整组测速", systemImage: "bolt") { Task { await store.measureGroup(group.all ?? [], name: name) } }
+                        .disabled(!store.connected)
+                }
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 12)], spacing: 12) {
                 ForEach((group.all ?? []).filter { search.isEmpty || name.localizedCaseInsensitiveContains(search) || $0.localizedCaseInsensitiveContains(search) }, id: \.self) { proxy in
@@ -87,15 +92,19 @@ private struct ProxyCard: View {
             HStack {
                 HStack(spacing: 5) {
                     Image(systemName: "waveform.path").font(.system(size: 10))
-                    if let delay {
+                    if store.measuring.contains(name) { ProgressView().controlSize(.mini) }
+                    else if let delay {
                         if delay > 0 { Text("\(delay) ms") }
                         else { Text("不可用") }
                     } else { Text("未测速") }
                 }.font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(delayColor)
                 Spacer()
-                Button("测速") { Task { await store.measure(proxy: name) } }
+                Button(store.measuring.contains(name) ? "取消" : "测速") {
+                    if store.measuring.contains(name) { store.cancelMeasurement(proxy: name) }
+                    else { Task { await store.measure(proxy: name) } }
+                }
                     .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .disabled(store.isBusy || !store.connected).help("测速")
+                    .disabled(!store.connected).help("测速")
             }
         }
         .padding(ZFlyMetrics.panelPadding).modifier(SurfacePanel(selected: selected))

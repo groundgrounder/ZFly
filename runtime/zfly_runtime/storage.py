@@ -47,7 +47,7 @@ def default_state():
             "mode": "rule", "mixedPort": 7890, "ipv6": False, "allowLan": False,
             "tcpConcurrent": True, "logLevel": "info",
         },
-        "workspace": {"app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True}},
+        "workspace": {"app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True, "userAgent": ""}},
         "catalog": {},
     }
 
@@ -61,6 +61,15 @@ def _valid_http_url(value):
         return False
     return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
             and not parsed.username and not parsed.password)
+
+
+APP_KEYS = {"autoRun", "testUrl", "checkCertificate", "userAgent"}
+
+
+def valid_user_agent(value):
+    # An empty value selects the built-in default. Header text must stay
+    # printable ASCII so it cannot inject lines or fail to encode.
+    return isinstance(value, str) and len(value) <= 256 and all(" " <= c <= "~" for c in value)
 
 
 WORKSPACE_SECTIONS = {"core", "dns", "tun", "geo", "app", "dav", "profileOverrides",
@@ -146,10 +155,11 @@ def validate_state(value):
         elif not isinstance(item, dict):
             raise ValueError()
         elif section == "app":
-            if (set(item) - {"autoRun", "testUrl", "checkCertificate"}
+            if (set(item) - APP_KEYS
                     or type(item.get("autoRun")) is not bool
                     or type(item.get("checkCertificate")) is not bool
-                    or not _valid_http_url(item.get("testUrl"))):
+                    or not _valid_http_url(item.get("testUrl"))
+                    or not valid_user_agent(item.get("userAgent", ""))):
                 raise ValueError()
         elif section == "dav":
             if (set(item) - {"uri", "user", "password", "fileName"}

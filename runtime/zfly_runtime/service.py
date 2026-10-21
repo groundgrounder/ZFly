@@ -19,9 +19,18 @@ import uuid
 from ._vendor import yaml
 from .network import validate_network
 from .schema import CONFIG_KEYS, NETWORK_CONFIG_FIELDS, validate_core_config
-from .storage import RuntimeErrorMessage, digest, encode_json
+from . import __version__
+from .storage import APP_KEYS, RuntimeErrorMessage, digest, encode_json, valid_user_agent
 
 MAX_PROFILE = 16 * 1024 * 1024
+# Subscription panels choose protocols by User-Agent. A plain "clash" match yields
+# legacy Clash output without VLESS, Hysteria, TUIC, AnyTLS or Mieru nodes. Send
+# mihomo's own global-ua form so "meta" is the parsed client name. The FlClash
+# core reports a placeholder version, so state the feature level of the bundled
+# cores; version-gated panel features (for example ECH) depend on it. Do not add
+# a ZFly token: some panels answer HTTP 403 to any User-Agent containing "zfly",
+# even when a known client name leads the header.
+SUBSCRIPTION_USER_AGENT = "clash.meta/1.19.9"
 NETWORK_KEYS = NETWORK_CONFIG_FIELDS
 TITLES = {"core": "核心设置", "dns": "DNS 与 hosts", "tun": "TUN 与路由覆盖", "geo": "Geo 资源",
           "app": "启动与测试", "dav": "WebDAV 备份连接", "profileOverrides": "配置专属覆盖",
@@ -31,7 +40,7 @@ READONLY = {"logs", "dnsQueries", "requests", "providers", "resources"}
 PROFILE_SECTIONS = {"profileOverrides", "profileRules"}
 DEFAULTS = {"core": {}, "dns": {"dns": {}, "hosts": {}}, "tun": {}, "geo": {},
             "profileOverrides": {}, "globalRules": "", "profileRules": "",
-            "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True},
+            "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True, "userAgent": ""},
             "dav": {"uri": "", "user": "", "password": "", "fileName": "zfly-backup.json"}}
 FORBIDDEN = {"external-controller", "external-controller-tls", "external-controller-unix", "external-controller-pipe",
              "secret", "external-ui", "external-ui-url", "external-ui-name", "listeners", "redir-port", "tproxy-port",
@@ -220,7 +229,7 @@ class Service:
                     "running": self.running and alive,
                     "coreStatus": self.last_error or ("运行中" if self.running and alive else ("已就绪 · 已停止代理" if alive else "核心已退出")),
                     "tunAuthorization": "已启用 TUN" if self.running and self.data["network"]["tunEnabled"] else ("macOS 权限助手尚未提供；可使用系统代理" if sys.platform == "darwin" else "TUN 需要核心具备 CAP_NET_ADMIN 权限；GNOME 可使用系统代理"),
-                    "profiles": [{**{k: v for k, v in profile.items() if k not in ("content", "ageSecretKey", "etag", "lastModified")}, "revision": digest(encode_json(profile))}
+                    "profiles": [{**{k: v for k, v in profile.items() if k not in ("content", "ageSecretKey", "etag", "lastModified", "agent")}, "revision": digest(encode_json(profile))}
                                  for profile in self.data["profiles"]],
                     "network": copy.deepcopy(self.data["network"]), "dataDirectory": str(self.storage.directory),
                     "updateErrors": copy.deepcopy(self.update_errors)}
@@ -233,7 +242,7 @@ class Service:
 
     def _fetch(self, url, headers=None, method="GET", data=None):
         validate_http_url(url)
-        request = urllib.request.Request(url, headers={"User-Agent": "ZFly/0.2 (Clash compatible)", **(headers or {})}, data=data, method=method)
+        request = urllib.request.Request(url, headers={"User-Agent": "ZFly/" + __version__, **(headers or {})}, data=data, method=method)
         # Follow the user's environment for initial downloads; once active, use ZFly's own proxy.
         proxies = {"http": "http://127.0.0.1:" + str(self.data["network"]["mixedPort"]),
                    "https": "http://127.0.0.1:" + str(self.data["network"]["mixedPort"])} if self.running else None
@@ -256,15 +265,21 @@ class Service:
             raise RuntimeErrorMessage("无法下载配置，请检查网络、订阅地址和 HTTPS 证书。") from None
 
     def _fetch_profile(self, profile):
-        headers = {}
-        if profile.get("etag"):
-            headers["If-None-Match"] = profile["etag"]
-        if profile.get("lastModified"):
-            headers["If-Modified-Since"] = profile["lastModified"]
-        return self.fetcher(profile["url"], headers)
+        """Return (body, headers, status, user agent) for a subscription download."""
+        configured = self.data["workspace"].get("app", {}).get("userAgent", "").strip()
+        agent = configured or SUBSCRIPTION_USER_AGENT
+        headers = {"User-Agent": agent}
+        # Panels vary the content by User-Agent, but an ETag may not. Never let a
+        # 304 keep content that was filtered for a different client identity.
+        if profile.get("agent") == agent:
+            if profile.get("etag"):
+                headers["If-None-Match"] = profile["etag"]
+            if profile.get("lastModified"):
+                headers["If-Modified-Since"] = profile["lastModified"]
+        return (*self.fetcher(profile["url"], headers), agent)
 
     def _download(self, profile, downloaded=None):
-        body, response, status = downloaded if downloaded is not None else self._fetch_profile(profile)
+        body, response, status, agent = downloaded if downloaded is not None else self._fetch_profile(profile)
         profile["updated"] = now()
         if status == 304:
             if not profile.get("content"):
@@ -283,6 +298,7 @@ class Service:
         response = {k.lower(): v for k, v in response.items()}
         profile["etag"] = response.get("etag")
         profile["lastModified"] = response.get("last-modified")
+        profile["agent"] = agent
         info = response.get("subscription-userinfo", "")
         for key in ("upload", "download", "total", "expire"):
             match = re.search(r"(?:^|;)\s*" + key + r"=(\d+)", info)
@@ -540,6 +556,7 @@ class Service:
                 if p["url"] != old_url:
                     p.pop("etag", None)
                     p.pop("lastModified", None)
+                    p.pop("agent", None)
             return {}, False, True
         if action == "profile.delete":
             self.data["profiles"].remove(p)
@@ -578,6 +595,9 @@ class Service:
             self.profile(identity)
         key = section + ":" + identity if section in PROFILE_SECTIONS else section
         value = copy.deepcopy(self.data["workspace"].get(key, DEFAULTS.get(section, [])))
+        if section == "app":
+            # List preferences added after this section was first saved.
+            value = {**DEFAULTS["app"], **value}
         if section == "core":
             value.update({target: self.data["network"][k] for k, target in NETWORK_KEYS.items()})
         if section in ("logs", "dnsQueries", "requests") and self.core.kind != "ipc":
@@ -637,11 +657,6 @@ class Service:
             validate_network(self.data["network"])
         if section == "tun" and value.get("tun", {}).get("enable") is not None:
             raise RuntimeErrorMessage("请在网络接管页启用 TUN。此处仅用于路由覆盖。")
-        if section == "app":
-            if set(value) - {"autoRun", "testUrl", "checkCertificate"} or type(value.get("autoRun")) is not bool or type(value.get("checkCertificate")) is not bool:
-                raise RuntimeErrorMessage("启动偏好支持 autoRun、testUrl、checkCertificate。")
-            if urllib.parse.urlsplit(value.get("testUrl", "")).scheme not in ("http", "https"):
-                raise RuntimeErrorMessage("测试地址必须为 HTTP / HTTPS URL。")
         if section == "dav":
             if value.get("password") is None:
                 value["password"] = self.data["workspace"].get("dav", {}).get("password", "")
@@ -656,13 +671,15 @@ class Service:
         elif not isinstance(value, dict):
             raise RuntimeErrorMessage("设置需要 JSON 对象。")
         elif section == "app":
-            if (set(value) - {"autoRun", "testUrl", "checkCertificate"}
+            if (set(value) - APP_KEYS
                     or type(value.get("autoRun")) is not bool or type(value.get("checkCertificate")) is not bool
                     or not isinstance(value.get("testUrl"), str)):
-                raise RuntimeErrorMessage("启动偏好支持 autoRun、testUrl、checkCertificate。")
+                raise RuntimeErrorMessage("启动偏好支持 autoRun、testUrl、checkCertificate、userAgent。")
             parsed = urllib.parse.urlsplit(value["testUrl"])
             if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
                 raise RuntimeErrorMessage("测试地址必须为有效的 HTTP / HTTPS URL。")
+            if not valid_user_agent(value.get("userAgent", "")):
+                raise RuntimeErrorMessage("订阅 User-Agent 需要不超过 256 个字符的 ASCII 文本，不能包含换行；留空使用默认值。")
         elif section == "dav":
             if set(value) - {"uri", "user", "password", "fileName"} or any(not isinstance(v, str) and not (k == "password" and v is None) for k, v in value.items()):
                 raise RuntimeErrorMessage("WebDAV 连接字段需要文本。")

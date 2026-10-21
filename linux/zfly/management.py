@@ -29,7 +29,7 @@ def preview_document(section):
         "dns": {"dns": {"enable": True, "enhanced-mode": "fake-ip", "nameserver": ["https://dns.alidns.com/dns-query"]}, "dns-override-keys": [], "hosts": {}},
         "tun": {"tun": {"auto-route": True, "strict-route": False}},
         "geo": {"geo-auto-update": False, "geo-update-interval": 24, "geodata-loader": "memconservative", "geox-url": {}},
-        "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True},
+        "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True, "userAgent": ""},
         "dav": {"uri": "https://example.com/dav", "user": "", "fileName": "backup.zip", "password": None},
         "profileOverrides": {"dns": {}, "dns-override-keys": [], "ntp": {}, "sniffer": {}, "tun": {}, "proxy-providers": {}},
         "logs": [{"LogLevel": "info", "Payload": "演示日志：配置载入完成"}],

@@ -8,7 +8,7 @@ public enum PreviewWorkspace {
         case .dns: value = "{\n  \"dns\": {\"enable\": true, \"enhanced-mode\": \"fake-ip\", \"nameserver\": [\"https://dns.alidns.com/dns-query\"]},\n  \"dns-override-keys\": [],\n  \"hosts\": {}\n}"
         case .tun: value = "{\n  \"tun\": {\"auto-route\": true, \"strict-route\": false}\n}"
         case .geo: value = "{\n  \"geo-auto-update\": false,\n  \"geo-update-interval\": 24,\n  \"geodata-loader\": \"memconservative\",\n  \"geox-url\": {}\n}"
-        case .app: value = "{\n  \"autoRun\": false,\n  \"testUrl\": \"https://www.gstatic.com/generate_204\",\n  \"checkCertificate\": true\n}"
+        case .app: value = "{\n  \"autoRun\": false,\n  \"testUrl\": \"https://www.gstatic.com/generate_204\",\n  \"checkCertificate\": true,\n  \"userAgent\": \"\"\n}"
         case .dav: value = "{\"uri\":\"https://example.com/dav\",\"user\":\"\",\"fileName\":\"backup.zip\",\"password\":null}"
         case .profileOverrides: value = "{\n  \"dns\": {},\n  \"dns-override-keys\": [],\n  \"ntp\": {},\n  \"sniffer\": {},\n  \"tun\": {},\n  \"proxy-providers\": {}\n}"
         case .globalRules, .profileRules: value = "DOMAIN-SUFFIX,example.com,DIRECT\nMATCH,DIRECT"

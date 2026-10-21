@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import tempfile
 import threading
@@ -277,6 +278,52 @@ class RuntimeTests(unittest.TestCase):
         payload = base64.b64encode(json.dumps(archive).encode()).decode()
         with self.assertRaisesRegex(RuntimeErrorMessage, "受支持的 ZFly 备份"):
             self.service.perform({"action": "tool.run", "tool": "restoreLocalAll", "data": payload})
+
+    def test_subscription_user_agent_requests_mihomo_protocols(self):
+        calls = []
+        def fetch(url, headers=None, method="GET", data=None):
+            calls.append(headers or {})
+            return YAML.encode(), {"ETag": "v1"}, 200
+        self.service.fetcher = fetch
+        identity = self.service.perform({"action": "profile.add", "url": "https://example.test/token"})["state"]["currentProfileID"]
+        agent = calls[-1]["User-Agent"]
+        # Panels such as Xboard parse the first "name/version" pair. It must be a
+        # Meta client name, otherwise AnyTLS, Mieru and VLESS nodes are dropped.
+        name, version = re.search(r"([a-zA-Z0-9\-_]+)[\/\s]+(v?[0-9]+(?:\.[0-9]+){0,2})", agent.lower()).groups()
+        self.assertEqual(name, "meta")
+        self.assertGreaterEqual(tuple(map(int, version.split("."))), (1, 19, 9))
+        # Some panels answer HTTP 403 to any User-Agent containing "zfly".
+        self.assertNotIn("zfly", agent.lower())
+
+        # Preferences saved before userAgent existed still list it and keep the default.
+        self.service.data["workspace"]["app"].pop("userAgent")
+        document = self.service.perform({"action": "workspace.read", "section": "app"})["document"]
+        self.assertEqual(json.loads(document["text"])["userAgent"], "")
+        self.service.perform({"action": "profile.update", "id": identity})
+        self.assertEqual(calls[-1]["User-Agent"], agent)
+        self.assertEqual(calls[-1]["If-None-Match"], "v1")
+        self.assertNotIn("agent", self.service.state()["profiles"][0])
+
+        # Content cached for another client identity must be downloaded again, not
+        # revalidated: a 304 would keep nodes the panel filtered for that client.
+        self.workspace("app", {**json.loads(document["text"]), "userAgent": "  clash-verge/v2.4.2  "})
+        self.service.perform({"action": "profile.update", "id": identity})
+        self.assertEqual(calls[-1]["User-Agent"], "clash-verge/v2.4.2")
+        self.assertNotIn("If-None-Match", calls[-1])
+        self.service.perform({"action": "profile.update", "id": identity})
+        self.assertEqual(calls[-1]["If-None-Match"], "v1")
+        self.service.profile(identity).pop("agent")  # Downloaded by an earlier ZFly version.
+        self.service.perform({"action": "profile.update", "id": identity})
+        self.assertNotIn("If-None-Match", calls[-1])
+        self.service.data["workspace"]["dav"] = {"uri": "https://example.test/dav", "user": "", "password": "", "fileName": "zfly.json"}
+        self.service.perform({"action": "tool.run", "tool": "testDAV"})
+        self.assertNotIn("User-Agent", calls[-1])
+
+        saved = copy.deepcopy(self.service.data["workspace"]["app"])
+        for invalid in ("a\r\nX-Injected: 1", "节点", "x" * 257, 42):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(RuntimeErrorMessage, "User-Agent"):
+                self.workspace("app", {**saved, "userAgent": invalid})
+            self.assertEqual(self.service.data["workspace"]["app"], saved)
 
     def test_profile_commands_reject_wrong_types_without_internal_errors(self):
         for command in (
@@ -598,6 +645,7 @@ class BoundaryTests(unittest.TestCase):
             {"schema": 1, "profiles": [], "currentProfileID": None, "selections": {},
              "network": {}, "workspace": [], "catalog": {}},
             {**default_state(), "workspace": {"app": []}},
+            {**default_state(), "workspace": {"app": {**default_state()["workspace"]["app"], "userAgent": "a\nb"}}},
             {**default_state(), "selections": {"missing": {}}},
         ]
         for invalid in invalid_values:

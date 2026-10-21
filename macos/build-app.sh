@@ -4,7 +4,7 @@ set -eu
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$package_dir/.." && pwd)
 artifact_dir="$repo_dir/build/macos"
-app_dir="$artifact_dir/ZFly.app"
+published_app="$artifact_dir/ZFly.app"
 mkdir -p "$artifact_dir/cache" "$artifact_dir/config" "$artifact_dir/security" "$artifact_dir/modules"
 export CLANG_MODULE_CACHE_PATH="$artifact_dir/modules"
 export SWIFTPM_MODULECACHE_OVERRIDE="$artifact_dir/modules"
@@ -24,6 +24,11 @@ binary_dir=$(swift build --package-path "$package_dir" -c release -debug-info-fo
   --cache-path "$artifact_dir/cache" --config-path "$artifact_dir/config" \
   --security-path "$artifact_dir/security" --manifest-cache local \
   --disable-netrc --disable-keychain "$@")
+
+# Publish a fresh bundle so Finder observes a new application directory and icon.
+staging_dir=$(mktemp -d "$artifact_dir/.zfly-package.XXXXXX")
+app_dir="$staging_dir/ZFly.app"
+trap 'rm -rf "$staging_dir"' 0
 
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/ZFly" "$app_dir/Contents/MacOS/.ZFly.new"
@@ -79,4 +84,18 @@ python3 "$repo_dir/tools/bundle-runtime.py" "$app_dir"
 codesign --force --sign - "$app_dir"
 codesign --verify --deep --strict "$app_dir"
 python3 "$repo_dir/tools/bundle-runtime.py" --verify-only "$app_dir"
-printf '%s\n' "$app_dir"
+if [ -e "$published_app" ]; then
+  mv "$published_app" "$staging_dir/previous.app"
+fi
+if ! mv "$app_dir" "$published_app"; then
+  if [ -e "$staging_dir/previous.app" ]; then
+    mv "$staging_dir/previous.app" "$published_app"
+  fi
+  exit 1
+fi
+touch "$published_app"
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+if [ -x "$lsregister" ]; then
+  "$lsregister" -f "$published_app" || printf '%s\n' 'Could not refresh the application registration.' >&2
+fi
+printf '%s\n' "$published_app"

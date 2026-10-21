@@ -13,7 +13,7 @@ struct AppSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-                PageHeader("设置", subtitle: "按你的习惯，调整 ZFly。")
+                PageHeader("设置")
                 SectionTabs(title: "设置分类", selection: $section, items: [
                     SectionTab(value: "核心", title: "核心", icon: "cpu"),
                     SectionTab(value: "网络接管", title: "网络接管", icon: "network"),

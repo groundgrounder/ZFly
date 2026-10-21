@@ -80,25 +80,20 @@ struct SurfacePanel: ViewModifier {
 
 struct PageHeader<Actions: View>: View {
     let title: LocalizedStringKey
-    let subtitle: LocalizedStringKey
     let actions: Actions
 
-    init(_ title: LocalizedStringKey, subtitle: LocalizedStringKey, @ViewBuilder actions: () -> Actions = { EmptyView() }) {
+    init(_ title: LocalizedStringKey, @ViewBuilder actions: () -> Actions = { EmptyView() }) {
         self.title = title
-        self.subtitle = subtitle
         self.actions = actions()
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.system(size: 25, weight: .bold)).accessibilityAddTraits(.isHeader)
-                Text(subtitle).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            Text(title).font(.system(size: 25, weight: .bold)).accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             actions
         }
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: ZFlyMetrics.controlHeight, alignment: .leading)
     }
 }
 

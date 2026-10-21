@@ -27,7 +27,7 @@ struct CatalogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("资源", subtitle: "管理自定义节点与代理组。")
+            PageHeader("资源")
             HStack {
                 SectionTabs(title: "分类", selection: $kind, items: [
                     SectionTab(value: .proxies, title: "自定义节点", icon: "network"),

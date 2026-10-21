@@ -15,7 +15,7 @@ struct ProxiesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("代理", subtitle: "选择出口节点，查看连接延迟。")
+            PageHeader("代理")
             SearchField(prompt: "搜索节点或代理组", text: $search)
             if names.isEmpty {
                 ContentUnavailableView("暂无代理组", systemImage: "network", description: Text("连接核心并加载含代理组的配置后显示。"))
@@ -149,7 +149,7 @@ struct ConnectionsView: View {
         let visibleConnections = connections
         let lastID = visibleConnections.last?.id
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("连接", subtitle: "查看实时请求、匹配规则与流量。") {
+            PageHeader("连接") {
                 StatusBadge(title: "\(all.count) 条活动连接", color: ZFlyPalette.tint)
             }
             SearchField(prompt: "搜索目标或进程", text: $search)

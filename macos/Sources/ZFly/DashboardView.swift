@@ -19,7 +19,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-                PageHeader("概览", subtitle: "连接与流量，一目了然。") {
+                PageHeader("概览") {
                     if store.preview { StatusBadge(title: "演示模式", color: ZFlyPalette.tint) }
                 }
                 connectionCard

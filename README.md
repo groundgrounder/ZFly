@@ -2,7 +2,7 @@
 
 独立运行的原生代理客户端。ZFly 自己管理订阅、配置、代理核心、持久化设置和系统代理，不需要安装或运行 FlClash，也无需填写管理桥地址或控制器密钥。
 
-macOS 使用 SwiftUI 与系统材质，Linux 使用 GTK 4 / libadwaita。代理协议由应用自带的 FlClash Go 核心或 mihomo 提供。
+macOS 版仅支持 Apple Silicon（arm64），使用 SwiftUI 与系统材质，不提供 Intel 版本。Linux 使用 GTK 4 / libadwaita。代理协议由应用自带的 FlClash Go 核心或 mihomo 提供。
 
 <img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly 应用图标">
 
@@ -25,11 +25,11 @@ macOS 的 `--safe-mode` 启动隔离的演示运行时，使用临时数据目�
 - 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者和 Geo 资源更新、网络诊断。
 - 本地 JSON / HTTPS WebDAV 备份恢复；私有数据权限、原子保存、过期写入拒绝、配置失败回滚和系统代理恢复记录。
 
-macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。旧版 macOS、Intel 与 aarch64 Linux 尚未完成本轮验证。
+macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。旧版 macOS 与 aarch64 Linux 尚未完成本轮验证。
 
 ## macOS 构建
 
-需要 Swift 6、macOS 26 或更新 SDK。最低部署目标为 macOS 14；旧系统兼容性仍需实机验证。
+在 Apple Silicon Mac 上构建，需要 Swift 6、macOS 26 或更新 SDK。最低部署目标为 macOS 14；旧系统兼容性仍需实机验证。
 
 ```sh
 sh macos/build-app.sh

@@ -192,14 +192,9 @@ private struct MainView: View {
 
     private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(nsImage: NSApplication.shared.applicationIconImage)
-                    .resizable().scaledToFit().frame(width: 32, height: 32)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("ZFly").font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("简单连接，自在掌控").font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-            }.padding(.horizontal, 9).padding(.top, 24).padding(.bottom, 28)
+            Text("ZFly")
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 12).padding(.top, 24).padding(.bottom, 28)
             sidebarGroup("工作区", pages: [.overview, .profiles, .proxies, .connections])
             sidebarGroup("管理", pages: [.catalog, .workspace, .tools]).padding(.top, 22)
             Spacer(minLength: 24)

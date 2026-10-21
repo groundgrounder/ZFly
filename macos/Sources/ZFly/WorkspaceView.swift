@@ -31,7 +31,7 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("规则", subtitle: "编辑 DNS、分流规则与配置覆盖。")
+            PageHeader("规则")
             if section == .dav {
                 Text("password 为 null 时保留已有密码；填写字符串时更新密码，空字符串清除密码。备份和恢复入口在“工具”页。")
                     .font(.callout).foregroundStyle(.secondary)
@@ -227,7 +227,7 @@ struct ToolsView: View {
     @State private var restoreConfirmation = false
     var body: some View {
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("工具", subtitle: "诊断网络、维护核心与备份配置。")
+            PageHeader("工具")
             SectionTabs(title: "工具分类", selection: $category, items: [
                 SectionTab(value: "诊断", title: "诊断", icon: "waveform.path.ecg"),
                 SectionTab(value: "维护", title: "维护", icon: "wrench.and.screwdriver"),

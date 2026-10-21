@@ -59,7 +59,7 @@ private struct ProfileManagement: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
-            PageHeader("订阅", subtitle: "管理订阅与本地配置，随时切换。") {
+            PageHeader("订阅") {
                 HStack(spacing: 8) {
                     Menu {
                         Button("导入 YAML", systemImage: "square.and.arrow.down") { importing = true }

@@ -2,7 +2,7 @@
 
 ZFly is a standalone application. It owns profiles, subscriptions, core processes, persistent settings and system proxy leases. It must work without a running or installed FlClash app. `FlClash/` is an optional external upstream checkout, absent in this workspace; if present, keep its history and working tree unchanged. `build/flclash-host/` is the current read-only source snapshot.
 
-- macOS: SwiftUI app `macos/Sources/ZFly`, shared adapter `macos/Sources/ZFlyKit`. Build with `sh macos/build-app.sh`.
+- macOS: Apple Silicon (arm64) only; Intel support is out of scope. SwiftUI app `macos/Sources/ZFly`, shared adapter `macos/Sources/ZFlyKit`. Build with `sh macos/build-app.sh`.
 - Linux: GTK 4 / libadwaita app `linux/zfly`. Package with the root `flake.nix`.
 - Editable icon: `assets/icon.svg`. Regenerate PNG and ICNS outputs with `python3 tools/render-icons.py`.
 - Launch previews only with `--safe-mode`. On macOS this starts an isolated bundled Python preview runtime with a fresh 0700 temporary data directory and a simulated core; it never starts a real core, accesses external networks or modifies system proxies. The only listener is the private 127.0.0.1 management port; temporary data is removed at exit. Linux keeps its native preview adapters. Preview YAML/schema checks do not replace real-core semantic validation. Never stop a user-owned FlClash/core process or change host networking during verification. Only terminate processes started by this task, using recorded PIDs.

@@ -187,13 +187,17 @@ def merge(base, overlay):
 
 
 class Service:
-    def __init__(self, storage, core, system_proxy, fetcher=None):
+    def __init__(self, storage, core, system_proxy, fetcher=None, *, network_validator=validate_network,
+                 port_preflight=None, listener_check=None):
         self.storage, self.core, self.system_proxy = storage, core, system_proxy
         self.data = storage.load()
         self.running = False
         self.last_error = None
         self.lock = threading.RLock()
         self.fetcher = fetcher or self._fetch
+        self.validate_network = network_validator
+        self.port_preflight = port_preflight
+        self.listener_check = listener_check
         self.proxy_signature = None
         self.update_errors = {}
         self.closing = False
@@ -427,6 +431,17 @@ class Service:
             except OSError:
                 raise RuntimeErrorMessage("端口 " + str(port) + " 已被其他程序占用。请关闭原代理或在网络接管设置中更换端口。") from None
 
+    def _check_listeners(self, config):
+        for key in ("mixed-port", "port", "socks-port"):
+            if config.get(key):
+                try:
+                    with socket.create_connection(("127.0.0.1", config[key]), timeout=2):
+                        pass
+                except OSError:
+                    raise RuntimeErrorMessage("核心未能监听端口 " + str(config[key]) + "，启动已回滚。") from None
+        if config["tun"]["enable"] and not any(name.startswith(config["tun"]["device"]) for _, name in socket.if_nameindex()):
+            raise RuntimeErrorMessage("TUN 设备未建立，请检查核心权限。")
+
     def _apply(self, running):
         if running and not self.data["currentProfileID"]:
             raise RuntimeErrorMessage("请先添加订阅或导入 YAML 配置。")
@@ -435,20 +450,12 @@ class Service:
         self.core.test_url = preferences.get("testUrl", DEFAULTS["app"]["testUrl"])
         self.core.check_certificate = preferences.get("checkCertificate", True)
         if running:
-            validate_network(self.data["network"])
-            self._preflight_ports(config)
+            self.validate_network(self.data["network"])
+            (self.port_preflight or self._preflight_ports)(config)
         # Core.apply is fallible; the caller restores the previous config on failure.
         self.core.apply(config, self.data["selections"].get(self.data["currentProfileID"], {}), running)
         if running:
-            for key in ("mixed-port", "port", "socks-port"):
-                if config.get(key):
-                    try:
-                        with socket.create_connection(("127.0.0.1", config[key]), timeout=2):
-                            pass
-                    except OSError:
-                        raise RuntimeErrorMessage("核心未能监听端口 " + str(config[key]) + "，启动已回滚。") from None
-            if config["tun"]["enable"] and not any(name.startswith(config["tun"]["device"]) for _, name in socket.if_nameindex()):
-                raise RuntimeErrorMessage("TUN 设备未建立，请检查核心权限。")
+            (self.listener_check or self._check_listeners)(config)
         signature = (config["mixed-port"], tuple(self.data["network"]["bypassDomains"])) if running and self.data["network"]["systemProxy"] else None
         if signature != self.proxy_signature:
             if signature:
@@ -563,7 +570,7 @@ class Service:
         if action == "network.save":
             if c.get("expected") != self.data["network"]:
                 raise RuntimeErrorMessage("网络设置已被修改，请重新载入。")
-            validate_network(c.get("network", {}))
+            self.validate_network(c.get("network", {}))
             self.data["network"] = copy.deepcopy(c["network"])
             return {}, True, True
         if action == "running.set":
@@ -744,7 +751,7 @@ class Service:
             for port in ("port", "socks-port"):
                 if port in value and (type(value[port]) is not int or not 0 <= value[port] <= 65535):
                     raise RuntimeErrorMessage("端口应为 0–65535 的整数。")
-            validate_network(self.data["network"])
+            self.validate_network(self.data["network"])
         if section == "tun" and value.get("tun", {}).get("enable") is not None:
             raise RuntimeErrorMessage("请在网络接管页启用 TUN。此处仅用于路由覆盖。")
         if section == "dav":

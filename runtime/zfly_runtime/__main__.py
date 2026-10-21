@@ -16,6 +16,7 @@ import urllib.parse
 
 from .core import Core, MAX_FRAME
 from .network import SystemProxy
+from .preview import PreviewBackend
 from .service import MAX_BACKUP, Service, parse_profile
 from .storage import StateStore, RuntimeErrorMessage, atomic_write, encode_json, validate_state
 
@@ -100,7 +101,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description="ZFly 独立应用运行时")
-    parser.add_argument("--data-dir", type=Path, default=default_directory())
+    parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--preview-state", choices=("default", "empty", "stopped"), default="default")
     parser.add_argument("--core", default=os.environ.get("ZFLY_CORE"))
     parser.add_argument("--core-kind", choices=("ipc", "mihomo"), default=os.environ.get("ZFLY_CORE_KIND", "ipc"))
     parser.add_argument("--resources", type=Path)
@@ -110,14 +113,21 @@ def main():
     args = parser.parse_args()
     if not args.ready_file and not args.recover_state_from:
         parser.error("--ready-file is required when starting the runtime")
+    if args.preview and args.recover_state_from:
+        parser.error("--preview cannot be combined with --recover-state-from")
     os.umask(0o077)
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     secret = secrets.token_urlsafe(32)
-    storage = service = server = None
+    storage = service = server = preview_backend = None
     try:
-        storage = StateStore(args.data_dir)
+        if args.preview:
+            preview_backend = PreviewBackend(secret, args.preview_state, stop)
+            service = preview_backend.service
+            storage = service.storage
+        else:
+            storage = StateStore(args.data_dir or default_directory())
         if args.recover_state_from:
             with args.recover_state_from.open("rb") as stream:
                 payload = stream.read(MAX_BACKUP + 1)
@@ -136,19 +146,20 @@ def main():
                 atomic_write(args.ready_file, encode_json({"recovered": True}))
             print("ZFly state recovered.")
             return 0
-        core_path = args.core or shutil.which("mihomo")
-        if not core_path:
-            raise RuntimeErrorMessage("应用缺少内置代理核心，请重新安装完整的 ZFly。")
-        core_home = storage.directory / "core"
-        core_home.mkdir(mode=0o700, exist_ok=True)
-        if args.resources and args.resources.is_dir():
-            for name in ("GEOIP.dat", "GEOSITE.dat", "GEOIP.metadb", "ASN.mmdb", "geoip.dat", "geosite.dat", "country.mmdb"):
-                source = args.resources / name
-                target = core_home / name
-                if source.is_file() and not target.exists():
-                    shutil.copyfile(source, target)
-        core = Core(core_path, core_home, secret, args.core_kind if args.core else "mihomo", stop_event=stop)
-        service = Service(storage, core, SystemProxy(storage.directory))
+        if not args.preview:
+            core_path = args.core or shutil.which("mihomo")
+            if not core_path:
+                raise RuntimeErrorMessage("应用缺少内置代理核心，请重新安装完整的 ZFly。")
+            core_home = storage.directory / "core"
+            core_home.mkdir(mode=0o700, exist_ok=True)
+            if args.resources and args.resources.is_dir():
+                for name in ("GEOIP.dat", "GEOSITE.dat", "GEOIP.metadb", "ASN.mmdb", "geoip.dat", "geosite.dat", "country.mmdb"):
+                    source = args.resources / name
+                    target = core_home / name
+                    if source.is_file() and not target.exists():
+                        shutil.copyfile(source, target)
+            core = Core(core_path, core_home, secret, args.core_kind if args.core else "mihomo", stop_event=stop)
+            service = Service(storage, core, SystemProxy(storage.directory))
         service.start()
         server = Server(service, secret)
         atomic_write(args.ready_file, encode_json({"endpoint": "http://127.0.0.1:" + str(server.server_port),
@@ -180,7 +191,9 @@ def main():
         if server:
             server.shutdown()
             server.server_close()
-        if service:
+        if preview_backend:
+            preview_backend.close()
+        elif service:
             with contextlib.suppress(Exception):
                 service.close()
         elif storage:

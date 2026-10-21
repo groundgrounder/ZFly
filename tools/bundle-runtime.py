@@ -64,7 +64,9 @@ def verify_artifacts(app):
     required = ["Contents/MacOS/ZFly", "Contents/Helpers/ZFlyCore", "Contents/Info.plist",
                 "Contents/Resources/ZFly.icns", "Contents/Resources/python/bin/python3",
                 "Contents/Resources/python/cert.pem", "Contents/Resources/runtime-manifest.json",
-                "Contents/Resources/runtime/zfly_runtime/service.py"]
+                "Contents/Resources/runtime/zfly_runtime/service.py",
+                "Contents/Resources/runtime/zfly_runtime/preview.py",
+                "Contents/Resources/runtime/zfly_runtime/preview.json"]
     required += ["Contents/Resources/geodata/" + name for name in GEODATA_NAMES]
     required += ["Contents/Resources/Licenses/" + name for name in ("ZFly-GPL-3.0.txt", "Python.txt", "PyYAML.txt", "Core.txt", "mihomo.txt")]
     for name in required:
@@ -153,7 +155,7 @@ def assemble(app):
     env = {"PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
            "PYTHONPATH": str(resources / "runtime"), "SSL_CERT_FILE": str(python / "cert.pem")}
     run(str(python / "bin/python3"), "-B", "-c",
-        "import ssl, socket, sqlite3, ctypes, plistlib; import zfly_runtime.service; print('Bundled Python and ZFly runtime OK')", env=env)
+        "import ssl, socket, sqlite3, ctypes, plistlib; import zfly_runtime.service, zfly_runtime.preview, zfly_runtime.__main__; print('Bundled Python and ZFly runtime OK')", env=env)
     verify_artifacts(app)
     print(f"Bundled {kind} core ({manifest['coreSHA256'][:12]}) and standalone Python; no FlClash app required at runtime.")
 

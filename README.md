@@ -13,7 +13,7 @@ macOS 使用 SwiftUI 与系统材质，Linux 使用 GTK 4 / libadwaita。代理�
 3. 按需开启“系统代理”，让遵循系统代理设置的应用使用 ZFly。默认混合端口为 `127.0.0.1:7890`。
 4. 停止代理或退出时，ZFly 恢复仍由自己持有的系统代理设置。
 
-`--safe-mode` 供离线演示界面。完整说明与功能范围见 [使用说明](docs/usage.md)。
+macOS 的 `--safe-mode` 启动隔离的演示运行时，使用临时数据目录和模拟核心，退出时删除数据；不启动真实核心、不访问外部网络、不修改系统代理。Linux 仍使用原有演示适配器。完整说明与功能范围见 [使用说明](docs/usage.md)。
 
 ## 已实现与限制
 
@@ -34,9 +34,20 @@ macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、
 ```sh
 sh macos/build-app.sh
 
-# 离线演示，不启动运行时或改系统网络
-open build/macos/ZFly.app --args --safe-mode
+# 隔离演示运行时；直接启动二进制，与已运行的实例分开
+build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode
 ```
+
+直接从 SwiftPM 开发演示界面时，必须显式指定 Python 和共享运行时目录（这两个变量只在 `--safe-mode` 下读取）：
+
+```sh
+cd macos
+ZFLY_DEV_PYTHON=/absolute/path/to/python3 \
+ZFLY_DEV_RUNTIME=/absolute/path/to/zfly/runtime \
+swift run ZFly --safe-mode
+```
+
+演示操作经过真实 Service 的校验、版本检查、事务、回滚与临时持久化。模拟核心只做 YAML / schema 校验，不能检查真实核心的协议语义（例如未知代理类型），也不执行真实测速、DNS、WebDAV、Geo 或提供者下载；不提供 Age 解密。详见[演示模式差异](docs/usage.md#演示模式)。
 
 输出为 `build/macos/ZFly.app`。包使用本机临时签名，正式发布还需开发者签名与公证。
 
@@ -82,6 +93,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=linux:runtime python3 -m unittest discover 
 swift build --package-path macos
 swift test --package-path macos
 sh macos/build-app.sh
+python3 tools/verify-preview.py --app build/macos/ZFly.app
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 

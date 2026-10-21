@@ -72,6 +72,24 @@ PYTHONPATH="$ZFLY_APP/Contents/Resources/runtime" \
 
 开启系统代理前保存原值，停止和退出时只恢复仍与 ZFly 设置一致的字段。如果用户或其他软件后来修改了代理，ZFly 保留那些改动。运行时会监测自己的核心退出并尝试还原系统代理；整个应用异常退出后，下一次启动会使用恢复记录尝试还原。系统拒绝修改时会报告错误并保留记录。
 
+## 演示模式
+
+macOS `--safe-mode` 会启动包内 Python 运行时并传入 `--preview`，全部操作使用与正常模式相同的 Service、HTTP 鉴权、事务、revision 校验、回滚和原子保存路径。数据从共享 `runtime/zfly_runtime/preview.json` 生成，每次新建权限 0700 的临时目录，状态权限为 0600；忽略运行时 `--data-dir` 和 `--core`，不读写默认数据目录。应用偏好也单独保存在内存中，演示实例可与用户自己的 ZFly 同时运行。
+
+只监听一个随机分配的 `127.0.0.1` 管理端口。演示核心不启动子进程、不监听代理端口，下载器返回内置 YAML 与用量响应头，系统代理适配器只记录调用。WebDAV 备份保存在内存中，Geo 和提供者更新返回模拟结果；端口预检、监听与 TUN 网卡检查不接触主机环境。退出或检测到父进程退出后删除临时数据；和其他进程一样，运行时遭到 SIGKILL 或机器断电时无法执行清理。
+
+`--preview-state default|empty|stopped` 分别表示有示例配置并运行、有空配置列表、有配置但停止代理。SwiftPM 直接开发时无内置 Python，需同时设置 `ZFLY_DEV_PYTHON`（Python 可执行文件绝对路径）和 `ZFLY_DEV_RUNTIME`（包含 `zfly_runtime` 的目录绝对路径），再运行 `swift run ZFly --safe-mode`；缺失时会明确报错，不搜索系统 Python。这两个变量只影响安全模式。运行时也可单独通过 `python3 -m zfly_runtime --preview --ready-file /path/to/ready.json` 启动。
+
+已知差异：
+
+- 模拟核心只验证 YAML 与 schema；未知协议类型、协议所需字段和实际核心语义由真实核心检验，不支持 Age 解密。
+- Selector 与自动组固定记录由内存核心提供，不模拟健康检查、故障转移或实际代理通信。
+- 测速固定等待 450 ms，然后返回 fixture 延迟；流量按运行时间递增，连接来自示例数据，DNS 返回文档示例地址。不能用这些结果判断网络可用性。
+- HTTP(S) URL、订阅、workspace、catalog、WebDAV 配置、过期写入等仍经过真实 Service 校验；外部服务错误、网络超时、系统权限和端口冲突需要正常模式的独立验证。
+- 不修改系统代理、DNS 或 TUN，也不注册登录项；这些系统能力不能由演示结果证明。
+
+Linux 这次继续使用自己的 PreviewManagement / PreviewController，未接入共享预览后端。
+
 ## 开发验证
 
 构建参数与安装方式见根目录 [README](../README.md)。离线测试使用模拟核心与系统代理接口，不访问实际网络设置：
@@ -86,13 +104,13 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s run
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 
-安全模式仅使用示例数据。开发时可导出自己的窗口内容用于视觉检查：
+macOS 安全模式通过隔离演示运行时提供示例数据，截图等待管理连接和首个核心快照，超时为 20 秒。可导出本次启动的窗口内容用于视觉检查：
 
 ```sh
 build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode --render-preview /tmp/zfly-overview.png
 ```
 
-逐次验证结果集中在[审计修复验证](audit-validation-2026-10-21.md)。本机缺少 gi，GTK 交互用例跳过；历史 Linux 结果不代表本轮改动已在该平台通过。
+执行 `python3 tools/verify-preview.py --app build/macos/ZFly.app` 可为八个页面的三种初始状态生成 24 张截图，并记录本次启动的 PID、管理监听和退出后的目录清理。结果位于 `build/macos/preview-backend-review/`。本次共享预览后端结果见[验证记录](preview-backend-validation-2026-10-21.md)，此前结果见[审计修复验证](audit-validation-2026-10-21.md)。本机缺少 gi，GTK 交互用例跳过；历史 Linux 结果不代表本轮改动已在该平台通过。
 
 GTK 交互回归需在带 GTK / libadwaita 的隔离图形会话内显式使用安全模式，并将 XDG 配置、数据和缓存目录指向临时目录：
 

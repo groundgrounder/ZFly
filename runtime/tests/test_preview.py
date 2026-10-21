@@ -38,6 +38,35 @@ class PreviewServiceTests(unittest.TestCase):
     def action(self, action, **values):
         return self.service.perform({"action": action, **values})
 
+    def test_global_group_contains_proxies_and_groups_in_config_order(self):
+        config = copy.deepcopy(self.service.core.last_config)
+        for groups in (config["proxy-groups"], list(reversed(config["proxy-groups"]))):
+            with self.subTest(groups=[item["name"] for item in groups]):
+                config["proxy-groups"] = groups
+                self.service.core.apply(config)
+                proxies = json.loads(self.service.relay("GET", "/proxies")[1])["proxies"]
+                self.assertIn("GLOBAL", proxies)
+                global_group = proxies["GLOBAL"]
+                names = [item["name"] for item in config.get("proxies", [])]
+                group_names = [item["name"] for item in groups]
+                self.assertEqual(global_group["type"], "Selector")
+                self.assertEqual(global_group["now"], "DIRECT")
+                self.assertEqual(global_group["all"], ["DIRECT", "REJECT"] + names + group_names)
+                self.assertEqual([name for name in global_group["all"] if name in group_names], group_names)
+
+    def test_global_selection_via_put_is_persisted_and_restored(self):
+        selected = self.service.core.last_config["proxy-groups"][0]["name"]
+        status, _ = self.service.relay("PUT", "/proxies/GLOBAL", json.dumps({"name": selected}).encode())
+        self.assertEqual(status, 204)
+        self.assertEqual(self.service.core.proxies["GLOBAL"]["now"], selected)
+        identity = self.service.state()["currentProfileID"]
+        self.assertEqual(self.service.storage.load()["selections"][identity]["GLOBAL"], selected)
+        for tool in ("apply", "restart"):
+            with self.subTest(tool=tool):
+                self.action("tool.run", tool=tool)
+                proxies = json.loads(self.service.relay("GET", "/proxies")[1])["proxies"]
+                self.assertEqual(proxies["GLOBAL"]["now"], selected)
+
     def test_profile_crud_download_read_write_and_stale_rejection(self):
         for action in ("profile.import", "profile.create", "profile.add"):
             kwargs = {"label": action, "url": "https://example.invalid/subscription"}

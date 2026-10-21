@@ -163,6 +163,9 @@ class FakeCore(Core):
                 names = item.get("proxies", [])
                 kind = {"select": "Selector", "url-test": "URLTest", "fallback": "Fallback", "load-balance": "LoadBalance"}.get(item["type"], item["type"])
                 proxies[item["name"]] = {"type": kind, "all": list(names), "now": names[0] if names else ""}
+            proxies["GLOBAL"] = {"type": "Selector", "now": "DIRECT",
+                                 "all": ["DIRECT", "REJECT"] + [item["name"] for item in config.get("proxies", [])]
+                                 + [item["name"] for item in config.get("proxy-groups", [])]}
             self.proxies = proxies
             for name, proxy in list((selections or {}).items()):
                 item = proxies.get(name, {})

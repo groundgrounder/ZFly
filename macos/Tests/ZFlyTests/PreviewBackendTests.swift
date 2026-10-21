@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import ZFlyKit
 @testable import ZFly
 
 extension XCTestCase {
@@ -28,6 +29,23 @@ extension XCTestCase {
 }
 
 final class PreviewBackendTests: XCTestCase, @unchecked Sendable {
+    @MainActor func testPreviewGroupNamesFollowConfigurationOrder() async throws {
+        let store = try await connectedPreviewStore()
+        let snapshot = try XCTUnwrap(store.snapshot)
+        var command = ManagementCommand("profile.read")
+        command.id = store.management?.currentProfileID
+        let result = try await store.perform(command)
+        let file = try XCTUnwrap(result.file)
+        let content = try XCTUnwrap(Data(base64Encoded: file.data))
+        let config = try XCTUnwrap(JSONSerialization.jsonObject(with: content) as? [String: Any])
+        let configuredGroups = try XCTUnwrap(config["proxy-groups"] as? [[String: Any]])
+        let groups = configuredGroups.compactMap { $0["name"] as? String }
+        XCTAssertFalse(groups.isEmpty)
+        XCTAssertEqual(snapshot.proxies.groupNames(mode: "rule"), groups)
+        XCTAssertFalse(snapshot.proxies.groupNames(mode: "rule").contains("GLOBAL"))
+        XCTAssertEqual(snapshot.proxies.groupNames(mode: "global"), groups + ["GLOBAL"])
+    }
+
     func testPreviewPreferencesStayInMemory() {
         let preferences = PreviewPreferences()
         preferences.set("dark", forKey: "appearance.scheme")

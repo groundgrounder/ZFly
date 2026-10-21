@@ -64,12 +64,35 @@ def _valid_http_url(value):
 
 
 APP_KEYS = {"autoRun", "testUrl", "checkCertificate", "userAgent"}
+APP_DEFAULTS = default_state()["workspace"]["app"]
 
 
 def valid_user_agent(value):
     # An empty value selects the built-in default. Header text must stay
     # printable ASCII so it cannot inject lines or fail to encode.
     return isinstance(value, str) and len(value) <= 256 and all(" " <= c <= "~" for c in value)
+
+
+def validate_workspace_value(section, item):
+    """One persisted shape contract, used by load, save, restore and editors."""
+    if section in ("globalRules", "profileRules"):
+        if not isinstance(item, str):
+            raise ValueError("追加规则需要文本。")
+    elif not isinstance(item, dict):
+        raise ValueError("设置需要 JSON 对象。")
+    elif section == "app":
+        if (set(item) - APP_KEYS or type(item.get("autoRun")) is not bool
+                or type(item.get("checkCertificate")) is not bool or not _valid_http_url(item.get("testUrl"))):
+            raise ValueError("启动偏好需要 autoRun、testUrl、checkCertificate、userAgent；测试地址需要 HTTP / HTTPS URL。")
+        if not valid_user_agent(item.get("userAgent", "")):
+            raise ValueError("订阅 User-Agent 需要不超过 256 个字符的 ASCII 文本，不能包含换行。")
+    elif section == "dav":
+        if (set(item) - {"uri", "user", "password", "fileName"}
+                or any(not isinstance(value, str) for value in item.values())
+                or not isinstance(item.get("uri"), str)
+                or (item["uri"] and (not _valid_http_url(item["uri"]) or not item["uri"].lower().startswith("https://")))
+                or not isinstance(item.get("fileName"), str) or not item["fileName"].strip()):
+            raise ValueError("WebDAV 需要 HTTPS uri、非空 fileName 和文本凭据。")
 
 
 WORKSPACE_SECTIONS = {"core", "dns", "tun", "geo", "app", "dav", "profileOverrides",
@@ -149,26 +172,7 @@ def validate_state(value):
                 raise ValueError()
         elif separator:
             raise ValueError()
-        if section in ("globalRules", "profileRules"):
-            if not isinstance(item, str):
-                raise ValueError()
-        elif not isinstance(item, dict):
-            raise ValueError()
-        elif section == "app":
-            if (set(item) - APP_KEYS
-                    or type(item.get("autoRun")) is not bool
-                    or type(item.get("checkCertificate")) is not bool
-                    or not _valid_http_url(item.get("testUrl"))
-                    or not valid_user_agent(item.get("userAgent", ""))):
-                raise ValueError()
-        elif section == "dav":
-            if (set(item) - {"uri", "user", "password", "fileName"}
-                    or any(not isinstance(value, str) for value in item.values())
-                    or not isinstance(item.get("uri"), str)
-                    or (item["uri"] and (not _valid_http_url(item["uri"]) or not item["uri"].lower().startswith("https://")))
-                    or not isinstance(item.get("fileName"), str)
-                    or not item["fileName"].strip()):
-                raise ValueError()
+        validate_workspace_value(section, item)
     catalog = value.get("catalog")
     if not isinstance(catalog, dict):
         raise ValueError()
@@ -218,9 +222,14 @@ class StateStore:
             value = json.loads(self.path.read_text())
             return validate_state(value)
         except (OSError, UnicodeError, ValueError, KeyError, TypeError):
-            raise RuntimeErrorMessage("ZFly 数据文件损坏或版本不兼容。原文件已保留，请从备份恢复。") from None
+            raise RuntimeErrorMessage("ZFly 数据文件损坏或版本不兼容。原文件已保留：" + str(self.path)
+                                      + "。请使用 --recover-state-from <ZFly备份.json> --data-dir <此目录> 恢复。") from None
 
     def save(self, value):
+        try:
+            validate_state(value)
+        except (ValueError, TypeError, KeyError):
+            raise RuntimeErrorMessage("保存的数据无效，原有状态已保留。") from None
         atomic_write(self.path, encode_json(value))
 
     def close(self):

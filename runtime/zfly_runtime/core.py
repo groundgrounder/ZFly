@@ -262,15 +262,18 @@ class Core:
                 self.call("startListener")
         else:
             self.request("PUT", "/configs?force=true", json.dumps({"path": str(path)}).encode())
-            for group, proxy in (selections or {}).items():
-                from urllib.parse import quote
-                try:
+        if selections:
+            # The live list includes provider nodes absent from YAML. Never PUT a
+            # remembered node that the newly applied configuration has removed.
+            proxies = json.loads(self.request("GET", "/proxies")[1])["proxies"]
+            for group, proxy in list(selections.items()):
+                current = proxies.get(group, {})
+                if current.get("type") != "Selector" or proxy not in current.get("all", []):
+                    del selections[group]
+                    continue
+                if self.kind != "ipc":
+                    from urllib.parse import quote
                     self.request("PUT", "/proxies/" + quote(group, safe=""), json.dumps({"name": proxy}).encode())
-                except RuntimeErrorMessage as error:
-                    # A subscription may have removed a remembered group or node. Other
-                    # failures (core disconnects, 4xx/5xx responses) must reach the UI.
-                    if "HTTP 404" not in str(error):
-                        raise
         self.last_config = config
 
     def close(self):

@@ -16,8 +16,8 @@ import urllib.parse
 
 from .core import Core, MAX_FRAME
 from .network import SystemProxy
-from .service import Service
-from .storage import StateStore, RuntimeErrorMessage, atomic_write, encode_json
+from .service import MAX_BACKUP, Service, parse_profile
+from .storage import StateStore, RuntimeErrorMessage, atomic_write, encode_json, validate_state
 
 
 def default_directory():
@@ -106,6 +106,7 @@ def main():
     parser.add_argument("--resources", type=Path)
     parser.add_argument("--ready-file", type=Path, required=True)
     parser.add_argument("--parent-pid", type=int)
+    parser.add_argument("--recover-state-from", type=Path, help="Restore a validated ZFly JSON backup without starting a core")
     args = parser.parse_args()
     os.umask(0o077)
     stop = threading.Event()
@@ -115,6 +116,22 @@ def main():
     storage = service = server = None
     try:
         storage = StateStore(args.data_dir)
+        if args.recover_state_from:
+            with args.recover_state_from.open("rb") as stream:
+                payload = stream.read(MAX_BACKUP + 1)
+            if len(payload) > MAX_BACKUP:
+                raise RuntimeErrorMessage("备份超过 40 MiB。")
+            archive = json.loads(payload)
+            if archive.get("application") != "ZFly" or archive.get("version") != 1:
+                raise RuntimeErrorMessage("这不是受支持的 ZFly 备份文件。")
+            recovered = validate_state(archive["state"])
+            for profile in recovered["profiles"]:
+                parse_profile(profile["content"])
+            if storage.path.exists():
+                atomic_write(storage.directory / ("state.before-recovery-" + secrets.token_hex(8) + ".json"), storage.path.read_bytes())
+            storage.save(recovered)
+            atomic_write(args.ready_file, encode_json({"recovered": True}))
+            return 0
         core_path = args.core or shutil.which("mihomo")
         if not core_path:
             raise RuntimeErrorMessage("应用缺少内置代理核心，请重新安装完整的 ZFly。")

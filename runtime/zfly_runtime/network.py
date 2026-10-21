@@ -5,8 +5,13 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import uuid
 
 from .storage import RuntimeErrorMessage, atomic_write, encode_json
+
+
+class InvalidProxyLease(RuntimeErrorMessage):
+    pass
 
 
 class SystemProxy:
@@ -97,28 +102,28 @@ class SystemProxy:
             os.chmod(self.path, 0o600)
             lease = json.loads(self.path.read_text())
         except (OSError, UnicodeError, ValueError):
-            raise RuntimeErrorMessage("系统代理恢复记录损坏，请在系统网络设置中手动检查代理。") from None
+            raise InvalidProxyLease("系统代理恢复记录损坏，请在系统网络设置中手动检查代理。") from None
         if not isinstance(lease, dict) or lease.get("platform") not in ("darwin", "linux"):
-            raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+            raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
         if lease["platform"] == "darwin":
             services = lease.get("services")
             if not isinstance(services, dict) or not services:
-                raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
             expected_kinds = {"web", "secureweb", "socksfirewall"}
             for service, item in services.items():
                 if not isinstance(service, str) or not service or not isinstance(item, dict):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 before = item.get("before")
                 if not isinstance(before, dict) or not before or not set(before).issubset(expected_kinds):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 for value in before.values():
                     if not self._valid_proxy_value(value):
-                        raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                        raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 target = item.get("target")
                 if not self._valid_proxy_value(target) or target.get("server") != "127.0.0.1" or not target.get("enabled"):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 if not self._valid_domains(item.get("bypass")) or not self._valid_domains(item.get("targetBypass")):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
         else:
             changes = lease.get("changes")
             allowed = {
@@ -127,19 +132,19 @@ class SystemProxy:
                 *(("org.gnome.system.proxy." + kind, key) for kind in ("http", "https", "socks") for key in ("host", "port")),
             }
             if not isinstance(changes, list) or not changes or len(changes) != len(allowed):
-                raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
             seen = set()
             for item in changes:
                 if not isinstance(item, dict) or set(item) != {"schema", "key", "before", "target"}:
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 pair = (item["schema"], item["key"])
                 if pair not in allowed or pair in seen or not all(isinstance(item[key], str) for key in ("schema", "key", "before", "target")):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 if any(ord(char) < 32 or ord(char) == 127 for char in item["before"] + item["target"]):
-                    raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                    raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
                 seen.add(pair)
             if seen != allowed:
-                raise RuntimeErrorMessage("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
+                raise InvalidProxyLease("系统代理恢复记录版本无效，请在系统网络设置中手动检查代理。")
         return lease
 
     @staticmethod
@@ -184,6 +189,11 @@ class SystemProxy:
         if errors:
             raise RuntimeErrorMessage("系统代理未能完整还原；恢复记录已保留。请在系统网络设置中关闭指向 ZFly 的代理。")
         self.path.unlink(missing_ok=True)
+
+    def quarantine(self):
+        target = self.path.with_name("proxy-lease.invalid-" + uuid.uuid4().hex + ".json")
+        self.path.replace(target)
+        return "系统代理恢复记录损坏，已隔离到 " + str(target) + "；请在系统网络设置中检查代理。"
 
 
 def validate_network(network, require_tun_permission=True):

@@ -17,12 +17,13 @@ import urllib.request
 import uuid
 
 from ._vendor import yaml
-from .network import validate_network
+from .network import InvalidProxyLease, validate_network
 from .schema import CONFIG_KEYS, NETWORK_CONFIG_FIELDS, validate_core_config
 from . import __version__
-from .storage import APP_KEYS, RuntimeErrorMessage, digest, encode_json, valid_user_agent
+from .storage import APP_DEFAULTS, RuntimeErrorMessage, digest, encode_json, validate_state, validate_workspace_value
 
 MAX_PROFILE = 16 * 1024 * 1024
+MAX_BACKUP = 40 * 1024 * 1024
 # Subscription panels choose protocols by User-Agent. A plain "clash" match yields
 # legacy Clash output without VLESS, Hysteria, TUIC, AnyTLS or Mieru nodes. Send
 # mihomo's own global-ua form so "meta" is the parsed client name. The FlClash
@@ -40,11 +41,11 @@ READONLY = {"logs", "dnsQueries", "requests", "providers", "resources"}
 PROFILE_SECTIONS = {"profileOverrides", "profileRules"}
 DEFAULTS = {"core": {}, "dns": {"dns": {}, "hosts": {}}, "tun": {}, "geo": {},
             "profileOverrides": {}, "globalRules": "", "profileRules": "",
-            "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True, "userAgent": ""},
+            "app": APP_DEFAULTS,
             "dav": {"uri": "", "user": "", "password": "", "fileName": "zfly-backup.json"}}
 FORBIDDEN = {"external-controller", "external-controller-tls", "external-controller-unix", "external-controller-pipe",
              "secret", "external-ui", "external-ui-url", "external-ui-name", "listeners", "redir-port", "tproxy-port",
-             "routing-mark", "interface-name"}
+             "routing-mark", "interface-name", "tunnels"}
 
 
 class DownloadRedirects(urllib.request.HTTPRedirectHandler):
@@ -106,16 +107,16 @@ def validate_profile_command(command, action, profile=None):
         validate_http_url(command.get("url", profile["url"]))
 
 
-def decode_data(value):
+def decode_data(value, limit=MAX_PROFILE):
     try:
-        if not isinstance(value, str) or len(value) > MAX_PROFILE * 4 // 3 + 8:
+        if not isinstance(value, str) or len(value) > limit * 4 // 3 + 8:
             raise ValueError()
         data = base64.b64decode(value, validate=True)
-        if len(data) > MAX_PROFILE:
+        if len(data) > limit:
             raise ValueError()
         return data
     except (ValueError, binascii.Error):
-        raise RuntimeErrorMessage("文件编码无效或超过 16 MiB。") from None
+        raise RuntimeErrorMessage("文件编码无效或超过 " + str(limit // (1024 * 1024)) + " MiB。") from None
 
 
 def parse_profile(content):
@@ -146,8 +147,30 @@ def parse_profile(content):
                    or not isinstance(provider.get("path", ""), str)
                    for name, provider in value.get(key, {}).items()):
                 raise ValueError()
-        # JSON serialization also rejects cycles, unsupported YAML types and excessive depth.
-        json.dumps(value, allow_nan=False)
+        sizes, visiting = {}, set()
+        def expanded_size(item, depth=0):
+            if depth > 100:
+                raise ValueError()
+            if not isinstance(item, (dict, list)):
+                return len(json.dumps(item, allow_nan=False, ensure_ascii=False).encode())
+            identity = id(item)
+            if identity in visiting:
+                raise ValueError()
+            if identity in sizes:
+                return sizes[identity]
+            visiting.add(identity)
+            size = 2
+            for key, child in item.items() if isinstance(item, dict) else enumerate(item):
+                size += expanded_size(child, depth + 1) + 4
+                if isinstance(item, dict):
+                    size += expanded_size(key, depth + 1)
+                if size > MAX_PROFILE:
+                    raise ValueError()
+            visiting.remove(identity)
+            sizes[identity] = size
+            return size
+        expanded_size(value)
+        json.dumps(value, allow_nan=False, ensure_ascii=False)
         return value
     except (ValueError, TypeError, yaml.YAMLError, RecursionError):
         raise RuntimeErrorMessage("这不是有效的 Clash / mihomo YAML 配置。请使用 Clash 订阅链接或 YAML 文件。") from None
@@ -176,10 +199,15 @@ class Service:
         self.closing = False
         self.operation_receipts = {}
         self.proxy_restore_pending = False
+        self._profile_revisions = {}
         self._published_state = self._state()
 
     def start(self):
-        self.system_proxy.disable()  # Recover a lease left by a previous crash.
+        warning = None
+        try:
+            self.system_proxy.disable()  # Recover a lease left by a previous crash.
+        except InvalidProxyLease:
+            warning = self.system_proxy.quarantine()
         self.core.start()
         try:
             auto_run = bool(self.data["workspace"].get("app", {}).get("autoRun") and self.data["currentProfileID"])
@@ -191,6 +219,9 @@ class Service:
             self.proxy_signature = None
             self.running = False
             self.last_error = str(error)
+
+        if warning:
+            self.last_error = warning
 
     def close(self):
         self.closing = True
@@ -234,15 +265,21 @@ class Service:
         return copy.deepcopy(self._published_state)
 
     def _state(self):
-            alive = self.core.alive
-            return {"apiVersion": 1, "currentProfileID": self.data["currentProfileID"],
-                    "running": self.running and alive,
-                    "coreStatus": self.last_error or ("运行中" if self.running and alive else ("已就绪 · 已停止代理" if alive else "核心已退出")),
-                    "tunAuthorization": "已启用 TUN" if self.running and self.data["network"]["tunEnabled"] else ("macOS 权限助手尚未提供；可使用系统代理" if sys.platform == "darwin" else "TUN 需要核心具备 CAP_NET_ADMIN 权限；GNOME 可使用系统代理"),
-                    "profiles": [{**{k: v for k, v in profile.items() if k not in ("content", "ageSecretKey", "etag", "lastModified", "agent")}, "revision": digest(encode_json(profile))}
-                                 for profile in self.data["profiles"]],
-                    "network": copy.deepcopy(self.data["network"]), "dataDirectory": str(self.storage.directory),
-                    "updateErrors": copy.deepcopy(self.update_errors)}
+        alive = self.core.alive
+        return {"apiVersion": 1, "currentProfileID": self.data["currentProfileID"],
+                "running": self.running and alive,
+                "coreStatus": self.last_error or ("运行中" if self.running and alive else ("已就绪 · 已停止代理" if alive else "核心已退出")),
+                "tunAuthorization": "已启用 TUN" if self.running and self.data["network"]["tunEnabled"] else ("macOS 权限助手尚未提供；可使用系统代理" if sys.platform == "darwin" else "TUN 需要核心具备 CAP_NET_ADMIN 权限；GNOME 可使用系统代理"),
+                "profiles": [{**{k: v for k, v in profile.items() if k not in ("content", "ageSecretKey", "etag", "lastModified", "agent")}, "revision": self._profile_revision(profile)}
+                             for profile in self.data["profiles"]],
+                "network": copy.deepcopy(self.data["network"]), "dataDirectory": str(self.storage.directory),
+                "updateErrors": copy.deepcopy(self.update_errors)}
+
+    def _profile_revision(self, profile):
+        identity = profile["id"]
+        if identity not in self._profile_revisions:
+            self._profile_revisions[identity] = digest(encode_json(profile))
+        return self._profile_revisions[identity]
 
     def profile(self, identity):
         item = next((p for p in self.data["profiles"] if p["id"] == identity), None)
@@ -250,7 +287,7 @@ class Service:
             raise RuntimeErrorMessage("配置已不存在，请刷新列表。")
         return item
 
-    def _fetch(self, url, headers=None, method="GET", data=None):
+    def _fetch(self, url, headers=None, method="GET", data=None, *, max_bytes=MAX_PROFILE):
         validate_http_url(url)
         request = urllib.request.Request(url, headers={"User-Agent": "ZFly/" + __version__, **(headers or {})}, data=data, method=method)
         # Follow the user's environment for initial downloads; once active, use ZFly's own proxy.
@@ -259,12 +296,12 @@ class Service:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), DownloadRedirects())
         try:
             with opener.open(request, timeout=40) as response:
-                body = response.read(MAX_PROFILE + 1)
+                body = response.read(max_bytes + 1)
                 if response.headers.get("Content-Encoding", "").lower() == "gzip":
                     with gzip.GzipFile(fileobj=io.BytesIO(body)) as compressed:
-                        body = compressed.read(MAX_PROFILE + 1)
-                if len(body) > MAX_PROFILE:
-                    raise RuntimeErrorMessage("下载文件超过 16 MiB。")
+                        body = compressed.read(max_bytes + 1)
+                if len(body) > max_bytes:
+                    raise RuntimeErrorMessage("下载文件超过 " + str(max_bytes // (1024 * 1024)) + " MiB。")
                 return body, dict(response.headers), response.status
         except urllib.error.HTTPError as error:
             if error.code == 304:
@@ -353,6 +390,7 @@ class Service:
         if not running:
             config["mixed-port"] = 0
         config["dns"] = {**config.get("dns", {}), "listen": ""}
+        config["bind-address"] = "*" if network["allowLan"] else "127.0.0.1"
         config.pop("ss-config", None)
         config.pop("vmess-config", None)
         config.pop("tuic-server", None)
@@ -414,7 +452,11 @@ class Service:
         signature = (config["mixed-port"], tuple(self.data["network"]["bypassDomains"])) if running and self.data["network"]["systemProxy"] else None
         if signature != self.proxy_signature:
             if signature:
-                self.system_proxy.enable(signature[0], list(signature[1]))
+                try:
+                    self.system_proxy.enable(signature[0], list(signature[1]))
+                except Exception:
+                    self.proxy_signature = None
+                    raise
             else:
                 self.system_proxy.disable()
             self.proxy_signature = signature
@@ -425,6 +467,19 @@ class Service:
     def perform(self, command, *, downloaded=None):
         if not isinstance(command, dict) or not isinstance(command.get("action"), str):
             raise RuntimeErrorMessage("操作格式无效。")
+        if command["action"] == "tool.run" and command.get("tool") == "updateProfiles":
+            with self.lock:
+                profiles = [copy.deepcopy(p) for p in self.data["profiles"] if p["type"] == "url"]
+            for profile in profiles:
+                with self.lock:
+                    if self.closing:
+                        raise RuntimeErrorMessage("ZFly 正在退出，请稍候。")
+                downloaded_profile = self._fetch_profile(profile)
+                with self.lock:
+                    if self.profile(profile["id"]) != profile:
+                        raise RuntimeErrorMessage("配置已被更新，请重试。")
+                    self.perform({"action": "profile.update", "id": profile["id"]}, downloaded=downloaded_profile)
+            return {"state": self.state(), "message": "全部订阅已更新。"}
         with self.lock:
             if self.closing:
                 raise RuntimeErrorMessage("ZFly 正在退出，请稍候。")
@@ -436,7 +491,7 @@ class Service:
                 if receipt is not None:
                     if receipt["command"] != command:
                         raise RuntimeErrorMessage("保存操作编号已用于其他请求。")
-                    return copy.deepcopy(receipt["result"])
+                    return {**copy.deepcopy(receipt["result"]), "state": self.state()}
             old, was_running = copy.deepcopy(self.data), self.running
             applied = False
             selection = None
@@ -445,19 +500,30 @@ class Service:
                 selection = result.pop("selection", None)
                 if selection:
                     self.core.request("PUT", "/proxies/" + urllib.parse.quote(selection["group"], safe=""), json.dumps({"name": selection["proxy"]}).encode())
+                if persist:
+                    try:
+                        validate_state(self.data)
+                    except (ValueError, TypeError, KeyError) as error:
+                        raise RuntimeErrorMessage("保存的数据无效：" + str(error)) from None
                 if reapply:
                     applied = True
                     self._apply(result.pop("running", self.running))
                 if persist:
                     self.storage.save(self.data)
+                    self._profile_revisions.clear()
+                if command["action"] == "workspace.write" and command.get("section") == "app":
+                    preferences = self.data["workspace"]["app"]
+                    self.core.test_url = preferences["testUrl"]
+                    self.core.check_certificate = preferences["checkCertificate"]
                 response = {"state": self.state(), **result}
                 if request_id is not None:
-                    self.operation_receipts[request_id] = {"command": copy.deepcopy(command), "result": copy.deepcopy(response)}
+                    self.operation_receipts[request_id] = {"command": copy.deepcopy(command), "result": copy.deepcopy(result)}
                     if len(self.operation_receipts) > 128:
                         del self.operation_receipts[next(iter(self.operation_receipts))]
                 return response
             except Exception:
                 self.data = old
+                self._profile_revisions.clear()
                 if selection and selection["previous"]:
                     try:
                         self.core.request("PUT", "/proxies/" + urllib.parse.quote(selection["group"], safe=""), json.dumps({"name": selection["previous"]}).encode())
@@ -543,7 +609,7 @@ class Service:
                 self.data["currentProfileID"] = profile["id"]
             return {"message": "配置已保存并选中。点击启动代理即可使用。" if first else "配置已保存。"}, first, True
         p = self.profile(c.get("id"))
-        if action in ("profile.edit", "profile.delete") and c.get("revision") != digest(encode_json(p)):
+        if action in ("profile.edit", "profile.delete") and c.get("revision") != self._profile_revision(p):
             raise RuntimeErrorMessage("配置已被更新，请刷新列表后重试。")
         current = p["id"] == self.data["currentProfileID"]
         if action == "profile.select":
@@ -570,6 +636,7 @@ class Service:
             return {}, False, True
         if action == "profile.delete":
             self.data["profiles"].remove(p)
+            self.update_errors.pop(p["id"], None)
             self.data["selections"].pop(p["id"], None)
             for section in PROFILE_SECTIONS:
                 self.data["workspace"].pop(section + ":" + p["id"], None)
@@ -656,7 +723,6 @@ class Service:
             value["sniffer"] = merge(value.get("sniffer", {}), {"enable": value.pop("sniffing")})
         if isinstance(value, dict) and FORBIDDEN.intersection(value):
             raise RuntimeErrorMessage("核心控制接口由 ZFly 自动管理，不能通过配置覆盖。")
-        self._validate_workspace_value(section, value)
         if section == "core":
             for field, target in NETWORK_KEYS.items():
                 if target in value:
@@ -670,30 +736,18 @@ class Service:
         if section == "dav":
             if value.get("password") is None:
                 value["password"] = self.data["workspace"].get("dav", {}).get("password", "")
+        self._validate_workspace_value(section, value)
         self.data["workspace"][key] = value
-        return {"document": self._document(section, c.get("id"))[1]}, section != "dav", True
+        validate_state(self.data)
+        return {"document": self._document(section, c.get("id"))[1]}, section not in ("dav", "app"), True
 
     @staticmethod
     def _validate_workspace_value(section, value):
-        if section in ("globalRules", "profileRules"):
-            if not isinstance(value, str):
-                raise RuntimeErrorMessage("追加规则需要每行一条的文本。")
-        elif not isinstance(value, dict):
-            raise RuntimeErrorMessage("设置需要 JSON 对象。")
-        elif section == "app":
-            if (set(value) - APP_KEYS
-                    or type(value.get("autoRun")) is not bool or type(value.get("checkCertificate")) is not bool
-                    or not isinstance(value.get("testUrl"), str)):
-                raise RuntimeErrorMessage("启动偏好支持 autoRun、testUrl、checkCertificate、userAgent。")
-            parsed = urllib.parse.urlsplit(value["testUrl"])
-            if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
-                raise RuntimeErrorMessage("测试地址必须为有效的 HTTP / HTTPS URL。")
-            if not valid_user_agent(value.get("userAgent", "")):
-                raise RuntimeErrorMessage("订阅 User-Agent 需要不超过 256 个字符的 ASCII 文本，不能包含换行；留空使用默认值。")
-        elif section == "dav":
-            if set(value) - {"uri", "user", "password", "fileName"} or any(not isinstance(v, str) and not (k == "password" and v is None) for k, v in value.items()):
-                raise RuntimeErrorMessage("WebDAV 连接字段需要文本。")
-        else:
+        try:
+            validate_workspace_value(section, value)
+        except ValueError as error:
+            raise RuntimeErrorMessage(str(error)) from None
+        if isinstance(value, dict) and section not in ("app", "dav"):
             parse_profile(encode_json(value or {"rules": []}))
             if FORBIDDEN.intersection(value):
                 raise RuntimeErrorMessage("核心控制接口由 ZFly 自动管理，不能通过配置覆盖。")
@@ -709,7 +763,7 @@ class Service:
             raise RuntimeErrorMessage("请先选择自定义配置。")
         scope = kind + ":" + (c.get("name", "") if kind == "groups" else "")
         records = self.data["catalog"].setdefault(scope, {})
-        if identity is not None and identity not in records:
+        if identity is not None and (not isinstance(identity, str) or identity not in records):
             raise RuntimeErrorMessage("资源已被删除，请刷新。")
         template = {"name": "新节点", "type": "socks5", "server": "127.0.0.1", "port": 1080} if kind == "proxies" else {"name": "新代理组", "type": "select", "proxies": ["DIRECT"]}
         record = records.get(identity, {"value": template})
@@ -862,7 +916,10 @@ class Service:
                 visit(name)
 
     def _backup(self):
-        return encode_json({"application": "ZFly", "version": 1, "created": now(), "state": self.data}).encode()
+        body = encode_json({"application": "ZFly", "version": 1, "created": now(), "state": self.data}).encode()
+        if len(body) > MAX_BACKUP:
+            raise RuntimeErrorMessage("备份超过 40 MiB，请减少配置后重试。")
+        return body
 
     def _dav(self, method, data=None):
         config = self.data["workspace"].get("dav", {})
@@ -872,56 +929,21 @@ class Service:
         headers = {"Authorization": "Basic " + base64.b64encode((config.get("user", "") + ":" + (config.get("password") or "")).encode()).decode()}
         name = config.get("fileName") or "zfly-backup.json"
         url = uri.rstrip("/") + "/" + urllib.parse.quote(name, safe="")
-        return self.fetcher(url, headers, method=method, data=data)
+        result = self.fetcher(url, headers, method=method, data=data, **({"max_bytes": MAX_BACKUP} if method == "GET" else {}))
+        if len(result[0]) > MAX_BACKUP:
+            raise RuntimeErrorMessage("备份超过 40 MiB。")
+        return result
 
     def _restore(self, payload, all_settings):
         try:
             archive = json.loads(payload)
             if archive["application"] != "ZFly" or archive["version"] != 1:
                 raise ValueError()
-            state = archive["state"]
-            if not isinstance(state, dict) or state["schema"] != 1 or not isinstance(state["profiles"], list):
-                raise ValueError()
-            identities = set()
-            for p in state["profiles"]:
-                if not isinstance(p["id"], str) or not p["id"] or p["id"] in identities:
-                    raise ValueError()
-                identities.add(p["id"])
-                parse_profile(p["content"])
-                if p["type"] not in ("file", "custom", "url") or not isinstance(p["label"], str):
-                    raise ValueError()
-                if (not isinstance(p["url"], str) or type(p["autoUpdate"]) is not bool
-                        or type(p["updateHours"]) is not int or not 1 <= p["updateHours"] <= 8760
-                        or not isinstance(p.get("ageSecretKey", ""), str)
-                        or not isinstance(p.get("updated", ""), str)):
-                    raise ValueError()
-                if p["type"] == "url":
-                    validate_http_url(p["url"])
-                if any(type(p[k]) is not int or not 0 <= p[k] <= 2**62 - 1 for k in ("upload", "download", "total", "expire") if p.get(k) is not None):
-                    raise ValueError()
-            if state["currentProfileID"] is not None and state["currentProfileID"] not in identities:
-                raise ValueError()
-            for field in ("catalog", "workspace", "selections"):
-                if not isinstance(state[field], dict):
-                    raise ValueError()
+            state = validate_state(archive["state"])
+            for profile in state["profiles"]:
+                parse_profile(profile["content"])
             for key, value in state["workspace"].items():
-                section, _, profile_id = key.partition(":")
-                if section not in DEFAULTS or (section in PROFILE_SECTIONS and profile_id not in identities):
-                    raise ValueError()
-                self._validate_workspace_value(section, value)
-            for key, records in state["catalog"].items():
-                if key != "proxies:" and (not key.startswith("groups:") or key[7:] not in identities):
-                    raise ValueError()
-                if not isinstance(records, dict):
-                    raise ValueError()
-                for item_id, record in records.items():
-                    if (not isinstance(item_id, str) or not isinstance(record, dict) or not isinstance(record.get("value"), dict)
-                            or not isinstance(record["value"].get("name"), str) or not isinstance(record["value"].get("type"), str)):
-                        raise ValueError()
-            if any(key not in identities or not isinstance(value, dict)
-                   or any(not isinstance(k, str) or not isinstance(v, str) for k, v in value.items())
-                   for key, value in state["selections"].items()):
-                raise ValueError()
+                self._validate_workspace_value(key.partition(":")[0], value)
             validate_network(state["network"], require_tun_permission=False)
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeErrorMessage):
             raise RuntimeErrorMessage("这不是受支持的 ZFly 备份文件。") from None
@@ -956,11 +978,6 @@ class Service:
             self.core.call("forceGc")
         elif tool == "closeConnections":
             self.core.request("DELETE", "/connections")
-        elif tool == "updateProfiles":
-            for p in self.data["profiles"]:
-                if p["type"] == "url":
-                    self._download(p)
-            return {"message": "全部订阅已更新。"}, True, True
         elif tool == "updateProvider":
             name = urllib.parse.quote(c.get("name", ""), safe="")
             self.core.request("PUT", "/providers/proxies/" + name)
@@ -976,7 +993,7 @@ class Service:
         elif tool in ("testDAV", "backupDAV"):
             self._dav("PROPFIND" if tool == "testDAV" else "PUT", data=None if tool == "testDAV" else self._backup())
         elif tool in ("restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll"):
-            body = decode_data(c.get("data")) if tool.startswith("restoreLocal") else self._dav("GET")[0]
+            body = decode_data(c.get("data"), MAX_BACKUP) if tool.startswith("restoreLocal") else self._dav("GET")[0]
             self._restore(body, tool.endswith("All"))
             return {"running": False, "message": "备份已恢复，代理已停止。请检查配置后启动。"}, True, True
         else:
@@ -1013,10 +1030,11 @@ class Service:
                     if next((p for p in self.data["profiles"] if p["id"] == identity), None) != profile:
                         continue
                     self.perform({"action": "profile.update", "id": identity}, downloaded=downloaded)
-            except RuntimeErrorMessage as error:
+            except (RuntimeErrorMessage, OSError) as error:
+                message = str(error) if isinstance(error, RuntimeErrorMessage) else "订阅更新未保存，请检查磁盘空间和数据目录权限。"
                 with self.lock:
                     if not self.closing and next((p for p in self.data["profiles"] if p["id"] == identity), None) == profile:
-                        self.update_errors[identity] = str(error)
+                        self.update_errors[identity] = message
 
     def _configuration(self):
         status, data = self.core.request("GET", "/configs")

@@ -19,7 +19,7 @@ import urllib.parse
 
 from zfly_runtime.__main__ import Handler
 from zfly_runtime.network import SystemProxy
-from zfly_runtime.service import DownloadRedirects, Service, parse_profile
+from zfly_runtime.service import MAX_BACKUP, DownloadRedirects, Service, decode_data, parse_profile
 from zfly_runtime.storage import StateStore, RuntimeErrorMessage, default_state, digest, encode_json
 
 
@@ -89,6 +89,129 @@ class RuntimeTests(unittest.TestCase):
             worker.join()
         self.assertEqual(self.service.state()["network"]["mode"], "global")
 
+    def test_persisted_mutations_round_trip_through_state_store(self):
+        store = StateStore(Path(self.directory.name) / "roundtrip")
+        self.addCleanup(store.close)
+        self.service.storage = store
+        identity = self.create()
+        self.workspace("dav", {"uri": "https://example.test/dav", "user": "", "password": None, "fileName": "backup.json"})
+        self.assertEqual(store.load(), self.service.data)
+        for invalid in ({"uri": "http://example.test", "fileName": "backup.json"},
+                        {"uri": "", "fileName": " "}, {"uri": ""}):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeErrorMessage):
+                self.workspace("dav", invalid)
+            self.assertEqual(store.load(), self.service.data)
+        archive = json.loads(self.service._backup())
+        archive["state"]["profiles"][0]["label"] = " "
+        with self.assertRaises(RuntimeErrorMessage):
+            self.service._restore(json.dumps(archive), True)
+        self.assertEqual(store.load()["currentProfileID"], identity)
+
+    def test_failed_proxy_enable_reenables_previous_lease_on_rollback(self):
+        self.create()
+        self.service.data["network"]["systemProxy"] = True
+        self.service.perform({"action": "running.set", "running": True})
+        old_signature = self.service.proxy_signature
+        self.proxy.enable.side_effect = [RuntimeErrorMessage("enable failed"), None]
+        network = copy.deepcopy(self.service.data["network"])
+        with self.assertRaisesRegex(RuntimeErrorMessage, "enable failed"):
+            self.service.perform({"action": "network.save", "expected": network,
+                                  "network": {**network, "bypassDomains": ["changed"]}})
+        self.assertEqual(self.proxy.enable.call_count, 3)
+        self.assertEqual(self.service.proxy_signature, old_signature)
+        self.assertTrue(self.service.running)
+
+    def test_tunnels_are_stripped_and_cannot_be_added_by_relay(self):
+        self.create(content=YAML + "tunnels: [tcp/0.0.0.0:7777/127.0.0.1:22]\n")
+        self.assertNotIn("tunnels", self.core.last_config)
+        with self.assertRaises(RuntimeErrorMessage):
+            self.service.relay("PATCH", "/configs", b'{"tunnels":[]}')
+        self.assertEqual(self.service._config(False)["bind-address"], "127.0.0.1")
+
+    def test_backup_has_its_own_limit_and_rejects_oversize_at_creation(self):
+        payload = base64.b64encode(b"x" * (16 * 1024 * 1024 + 1)).decode()
+        with self.assertRaises(RuntimeErrorMessage):
+            decode_data(payload)
+        self.assertEqual(len(decode_data(payload, MAX_BACKUP)), 16 * 1024 * 1024 + 1)
+        with patch("zfly_runtime.service.MAX_BACKUP", 20), self.assertRaisesRegex(RuntimeErrorMessage, "备份超过"):
+            self.service._backup()
+        self.service.data["workspace"]["dav"] = {"uri": "https://example.test", "fileName": "backup.json"}
+        self.service.fetcher = MagicMock(return_value=(b"{}", {}, 200))
+        self.service._dav("GET")
+        self.assertEqual(self.service.fetcher.call_args.kwargs["max_bytes"], MAX_BACKUP)
+
+    def test_corrupt_proxy_lease_is_quarantined_without_host_commands(self):
+        proxy = SystemProxy(self.directory.name, runner=MagicMock())
+        proxy.path.write_text("invalid-json")
+        self.service.system_proxy = proxy
+        self.core.start = MagicMock()
+        self.service.start()
+        proxy.runner.assert_not_called()
+        self.assertFalse(proxy.path.exists())
+        self.assertEqual(len(list(Path(self.directory.name).glob("proxy-lease.invalid-*.json"))), 1)
+        self.assertIn("已隔离", self.service.state()["coreStatus"])
+
+    def test_auto_update_survives_disk_error_without_exposing_paths(self):
+        self.service.fetcher = lambda *_: (YAML.encode(), {}, 200)
+        identity = self.service.perform({"action": "profile.add", "url": "https://example.test/sub"})["state"]["currentProfileID"]
+        self.service.profile(identity)["updated"] = "2000-01-01T00:00:00+00:00"
+        self.storage.fail = True
+        self.service.update_due()
+        self.assertIn("磁盘空间", self.service.update_errors[identity])
+        self.storage.fail = False
+        self.service.update_due()
+        self.assertNotIn(identity, self.service.update_errors)
+
+    def test_app_preferences_do_not_reload_core_and_poll_reuses_profile_hash(self):
+        self.create()
+        applies = len(self.core.applies)
+        self.workspace("app", {"autoRun": True, "testUrl": "https://example.test", "checkCertificate": False})
+        self.assertEqual(len(self.core.applies), applies)
+        self.assertEqual(self.core.test_url, "https://example.test")
+        with patch("zfly_runtime.service.digest", side_effect=AssertionError("poll hashed content")):
+            self.service.state()
+            self.service.state()
+
+    def test_yaml_alias_expansion_is_bounded_before_serialization(self):
+        content = 'a: &a ["' + 'x' * 1000 + '"]\n'
+        for index in range(1, 8):
+            previous = "a" if index == 1 else "a" + str(index - 1)
+            content += "a" + str(index) + ": &a" + str(index) + " [" + ",".join(["*" + previous] * 5) + "]\n"
+        with self.assertRaises(RuntimeErrorMessage):
+            parse_profile(content)
+
+    def test_catalog_non_string_id_is_a_presentable_error(self):
+        with self.assertRaises(RuntimeErrorMessage):
+            self.service.perform({"action": "catalog.read", "section": "proxies", "id": []})
+
+    def test_batch_subscription_download_does_not_hold_transaction_lock(self):
+        self.service.fetcher = lambda *_: (YAML.encode(), {}, 200)
+        self.service.perform({"action": "profile.add", "url": "https://example.test/sub"})
+        entered, release = threading.Event(), threading.Event()
+        def fetch(*_):
+            entered.set()
+            release.wait(2)
+            return YAML.encode(), {}, 200
+        self.service.fetcher = fetch
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.service.perform, {"action": "tool.run", "tool": "updateProfiles"})
+            try:
+                self.assertTrue(entered.wait(1))
+                acquired = self.service.lock.acquire(blocking=False)
+                self.assertTrue(acquired)
+                if acquired:
+                    self.service.lock.release()
+            finally:
+                release.set()
+            future.result(2)
+
+    def test_delete_profile_clears_update_errors(self):
+        identity = self.create()
+        profile = self.service.state()["profiles"][0]
+        self.service.update_errors[identity] = "old error"
+        self.service.perform({"action": "profile.delete", "id": identity, "revision": profile["revision"]})
+        self.assertNotIn(identity, self.service.update_errors)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -143,7 +266,10 @@ class RuntimeTests(unittest.TestCase):
         self.service.perform({"action": "network.save", "expected": expected,
                               "network": {**expected, "mode": "direct"}})
         applies = len(self.core.applies)
-        self.assertEqual(self.service.perform(command), receipt)
+        retried = self.service.perform(command)
+        self.assertEqual(retried["document"], receipt["document"])
+        self.assertEqual(retried["state"], self.service.state())
+        self.assertNotEqual(retried["state"], receipt["state"])
         self.assertEqual(self.storage.saved["network"]["mode"], "direct")
         self.assertEqual(len(self.core.applies), applies)
         with self.assertRaisesRegex(RuntimeErrorMessage, "其他请求"):
@@ -651,7 +777,7 @@ class BoundaryTests(unittest.TestCase):
                     StateStore(store.directory)
                 with patch("zfly_runtime.storage.os.replace", side_effect=OSError("disk")):
                     with self.assertRaises(OSError):
-                        store.save({})
+                        store.save(default_state())
                 self.assertEqual(store.load(), default_state())
                 self.assertFalse(list(store.directory.glob(".zfly-*")))
             finally:

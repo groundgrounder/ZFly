@@ -83,26 +83,27 @@ class CoreTests(unittest.TestCase):
             self.assertIsNone(core.process)
             self.assertFalse(core.alive)
 
-    def test_mihomo_selection_only_ignores_missing_group(self):
+    def test_selection_pruning_uses_live_nodes_and_keeps_backend_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             core = Core("/bin/true", Path(directory) / "home", "secret", kind="mihomo")
             calls = []
-
             def request(method, path, data=None):
-                calls.append((method, path, data))
-                if path.startswith("/configs"):
-                    return 204, b""
-                raise RuntimeErrorMessage("核心拒绝操作（HTTP 500）：backend unavailable")
-
+                calls.append((method, path))
+                if path == "/proxies":
+                    return 200, json.dumps({"proxies": {"group": {"type": "Selector", "all": ["DIRECT"]}}}).encode()
+                return 204, b""
             core.request = request
+            selections = {"group": "removed", "missing": "DIRECT"}
+            core.apply({"mode": "rule"}, selections)
+            self.assertEqual(selections, {})
+            self.assertEqual(calls, [("PUT", "/configs?force=true"), ("GET", "/proxies")])
+            def failing(method, path, data=None):
+                if path == "/proxies/group":
+                    raise RuntimeErrorMessage("HTTP 500")
+                return request(method, path, data)
+            core.request = failing
             with self.assertRaisesRegex(RuntimeErrorMessage, "HTTP 500"):
-                core.apply({"mode": "rule"}, {"group": "missing", "proxy": "DIRECT"})
-
-            self.assertEqual(len(calls), 2)
-            core.request = lambda method, path, data=None: (204, b"") if path.startswith("/configs") else (_ for _ in ()).throw(
-                RuntimeErrorMessage("核心拒绝操作（HTTP 404）：not found"))
-            core.apply({"mode": "rule"}, {"missing": "DIRECT"})
-            self.assertEqual(core.last_config, {"mode": "rule"})
+                core.apply({"mode": "rule"}, {"group": "DIRECT"})
 
 
 if __name__ == "__main__":

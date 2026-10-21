@@ -1,3 +1,5 @@
+> 历史记录：仅描述当时的修改与验证。当前结果见 [审计修复验证](../audit-validation-2026-10-21.md)。旧构建截图与临时日志未归档。
+
 # macOS 前端审查与重构
 
 审查日期：2026-10-18。范围：`macos/Sources/ZFly` 的 SwiftUI 前端。
@@ -39,13 +41,13 @@
 
 ## 代码组织
 
-- [Appearance.swift](../macos/Sources/ZFly/Appearance.swift)：颜色、尺寸、卡片、页头、搜索、状态标签、等宽分类条、共用表单行和按钮。
-- [App.swift](../macos/Sources/ZFly/App.swift)：窗口布局、分组导航、页面保留和状态栏。
-- [NetworkViews.swift](../macos/Sources/ZFly/NetworkViews.swift)：独立的节点与连接页面。
-- [DashboardView.swift](../macos/Sources/ZFly/DashboardView.swift)：连接状态、流量与常用控制。
-- [ManagementView.swift](../macos/Sources/ZFly/ManagementView.swift)、[SettingsView.swift](../macos/Sources/ZFly/SettingsView.swift)：订阅管理、设置分类与草稿。
-- [CatalogView.swift](../macos/Sources/ZFly/CatalogView.swift)、[WorkspaceView.swift](../macos/Sources/ZFly/WorkspaceView.swift)：资源、规则与工具。
-- [PreviewOptions.swift](../macos/Sources/ZFly/PreviewOptions.swift)：仅在 `--safe-mode` 下接受页面、分类、查询与示例状态覆盖。
+- [Appearance.swift](../../macos/Sources/ZFly/Appearance.swift)：颜色、尺寸、卡片、页头、搜索、状态标签、等宽分类条、共用表单行和按钮。
+- [App.swift](../../macos/Sources/ZFly/App.swift)：窗口布局、分组导航、页面保留和状态栏。
+- [NetworkViews.swift](../../macos/Sources/ZFly/NetworkViews.swift)：独立的节点与连接页面。
+- [DashboardView.swift](../../macos/Sources/ZFly/DashboardView.swift)：连接状态、流量与常用控制。
+- [ManagementView.swift](../../macos/Sources/ZFly/ManagementView.swift)、[SettingsView.swift](../../macos/Sources/ZFly/SettingsView.swift)：订阅管理、设置分类与草稿。
+- [CatalogView.swift](../../macos/Sources/ZFly/CatalogView.swift)、[WorkspaceView.swift](../../macos/Sources/ZFly/WorkspaceView.swift)：资源、规则与工具。
+- [PreviewOptions.swift](../../macos/Sources/ZFly/PreviewOptions.swift)：仅在 `--safe-mode` 下接受页面、分类、查询与示例状态覆盖。
 
 `Store.swift` 的改动仅用于安全预览数据初始化；`NativeRuntime.swift` 扩展预览尺寸参数，并在窗口首次成为活动窗口时调整初始焦点。共享适配层 `ZFlyKit` 与重构前备份一致，`FlClash/` 工作树保持干净。
 
@@ -53,10 +55,10 @@
 
 - `sh macos/build-app.sh` 的 Release 构建成功。
 - `codesign --verify --deep --strict build/macos/ZFly.app` 通过；应用元数据、图标、预览资源和中英文本地化已检查。
-- 当前布局的 21 个 `--safe-mode` 离屏预览均成功生成，进程退出码均为 0。记录见 [grid/results.json](../build/macos/ui-review/grid/results.json)。
+- 当前布局的 21 个 `--safe-mode` 离屏预览均成功生成，进程退出码均为 0。记录见 grid/results.json（旧构建记录未归档）。
 - 当前布局覆盖全部主页面、设置与工具分类；包含 900×640、1100×760、1440×900，浅色与深色、中英文，以及工具示例输出。这些维度按代表性场景组合验证，并非全部排列组合。
-- 额外截取当前布局的概览、工具浅色实际窗口和设置深色实际窗口，核对卡片边界、控件对齐、材质和启动焦点。离屏深色截图中的亮分隔线未在实际窗口复现。记录见 [grid/native-results.json](../build/macos/ui-review/grid/native-results.json)；这些进程在截图后由脚本结束，记录中的 `-15` 为 SIGTERM。
-- 此前的空配置、停止和搜索无匹配状态检查保留于 [results.json](../build/macos/ui-review/results.json)。
+- 额外截取当前布局的概览、工具浅色实际窗口和设置深色实际窗口，核对卡片边界、控件对齐、材质和启动焦点。离屏深色截图中的亮分隔线未在实际窗口复现。记录见 grid/native-results.json（旧构建记录未归档）；这些进程在截图后由脚本结束，记录中的 `-15` 为 SIGTERM。
+- 此前的空配置、停止和搜索无匹配状态检查保留于 results.json（旧构建记录未归档）。
 - 所有验证启动均使用 `--safe-mode`；只结束本次任务记录的进程。最终核对的 65 个已记录进程均已退出，未启动真实核心或修改宿主网络。
 
 本轮完成构建与视觉检查，未执行完整自动化交互测试、VoiceOver 实机测试、真实核心／系统代理集成测试或 Linux 平台验证。TUN 等能力仍按实际支持情况显示限制。
@@ -65,18 +67,18 @@
 
 | 场景 | 截图 |
 | --- | --- |
-| 重构前概览 | [before-overview.png](../build/macos/ui-review/before-overview.png) |
-| 当前概览浅色实际窗口 | [overview-light-native.png](../build/macos/ui-review/grid/overview-light-native.png) |
-| 当前工具浅色实际窗口 | [tools-light-native.png](../build/macos/ui-review/grid/tools-light-native.png) |
-| 当前设置深色实际窗口 | [settings-dark-native.png](../build/macos/ui-review/grid/settings-dark-native.png) |
-| 最小窗口英文概览 | [overview-min-en.png](../build/macos/ui-review/grid/overview-min-en.png) |
-| 代理选择 | [proxies-light.png](../build/macos/ui-review/grid/proxies-light.png) |
-| 订阅管理 | [profiles-min-en.png](../build/macos/ui-review/grid/profiles-min-en.png) |
-| 网络接管设置 | [settings-network-min-en.png](../build/macos/ui-review/grid/settings-network-min-en.png) |
-| 规则编辑 | [rules-min-en.png](../build/macos/ui-review/grid/rules-min-en.png) |
-| 工具维护操作 | [tools-maintenance-min-en.png](../build/macos/ui-review/grid/tools-maintenance-min-en.png) |
-| 工具备份与恢复 | [tools-backup-min-en.png](../build/macos/ui-review/grid/tools-backup-min-en.png) |
-| 工具输出示例 | [tools-result-min-en.png](../build/macos/ui-review/grid/tools-result-min-en.png) |
+| 重构前概览 | before-overview.png（旧构建记录未归档） |
+| 当前概览浅色实际窗口 | overview-light-native.png（旧构建记录未归档） |
+| 当前工具浅色实际窗口 | tools-light-native.png（旧构建记录未归档） |
+| 当前设置深色实际窗口 | settings-dark-native.png（旧构建记录未归档） |
+| 最小窗口英文概览 | overview-min-en.png（旧构建记录未归档） |
+| 代理选择 | proxies-light.png（旧构建记录未归档） |
+| 订阅管理 | profiles-min-en.png（旧构建记录未归档） |
+| 网络接管设置 | settings-network-min-en.png（旧构建记录未归档） |
+| 规则编辑 | rules-min-en.png（旧构建记录未归档） |
+| 工具维护操作 | tools-maintenance-min-en.png（旧构建记录未归档） |
+| 工具备份与恢复 | tools-backup-min-en.png（旧构建记录未归档） |
+| 工具输出示例 | tools-result-min-en.png（旧构建记录未归档） |
 
 截图与验证记录位于 `build/macos/ui-review/`；构建产物位于 `build/macos/ZFly.app`。
 
@@ -87,14 +89,14 @@
 `AppDelegate` 现在只在每个普通窗口首次成为活动窗口时，将初始响应对象设为窗口本身。使用弱引用记录已处理窗口，后续页面切换和窗口重新激活不再清除焦点；按钮继续参与键盘导航，系统焦点提示仍可正常显示。
 
 - Release 构建与签名验证通过。
-- 浅色默认启动和深色工具页的实际窗口均不再出现自动焦点框。截图与进程记录见 [focus/native-results.json](../build/macos/ui-review/focus/native-results.json)。
-- 使用实际 `AppDelegate` 和独立 SwiftUI 控件进行安全模式验证：初始响应对象为窗口，键盘遍历可以进入控件，窗口重新激活后保留主动选择的焦点。记录见 [focus/keyboard-check.log](../build/macos/ui-review/focus/keyboard-check.log)。这项检查不等同于全页面键盘操作或 VoiceOver 测试。
+- 浅色默认启动和深色工具页的实际窗口均不再出现自动焦点框。截图与进程记录见 focus/native-results.json（旧构建记录未归档）。
+- 使用实际 `AppDelegate` 和独立 SwiftUI 控件进行安全模式验证：初始响应对象为窗口，键盘遍历可以进入控件，窗口重新激活后保留主动选择的焦点。记录见 focus/keyboard-check.log（旧构建记录未归档）。这项检查不等同于全页面键盘操作或 VoiceOver 测试。
 - 仅启动安全模式进程，所有记录进程均已退出；未修改宿主网络。`ZFlyKit` 与原始备份一致，`FlClash/` 工作树保持干净。
 
 | 场景 | 截图 |
 | --- | --- |
-| 浅色默认启动 | [overview-light-native.png](../build/macos/ui-review/focus/overview-light-native.png) |
-| 深色工具页 | [tools-dark-native.png](../build/macos/ui-review/focus/tools-dark-native.png) |
+| 浅色默认启动 | overview-light-native.png（旧构建记录未归档） |
+| 深色工具页 | tools-dark-native.png（旧构建记录未归档） |
 
 ## 工具栏按钮焦点框（2026-10-19）
 

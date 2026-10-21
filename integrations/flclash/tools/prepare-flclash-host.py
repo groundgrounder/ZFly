@@ -9,7 +9,7 @@ import tarfile
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def git(repository, *arguments, **options):
@@ -43,7 +43,7 @@ def extract_revision(repository, revision, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=ROOT / "FlClash")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/flclash-host")
+    parser.add_argument("--output", type=Path, default=ROOT / "build/flclash-migration")
     arguments = parser.parse_args()
     source = arguments.source.resolve()
     output = arguments.output.absolute()

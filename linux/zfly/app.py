@@ -55,6 +55,7 @@ class Window(Adw.ApplicationWindow):
         self.delay_scope = None
         self.measuring = set()
         self.measurements = {}
+        self.node_measurements = {}
         self.file_cancellables = set()
         self.pending_refresh = False
         self.busy = False
@@ -402,8 +403,7 @@ class Window(Adw.ApplicationWindow):
         app = self.get_application()
         for cancellable in self.file_cancellables:
             cancellable.cancel()
-        for cancel in self.measurements.values():
-            cancel.set()
+        self._cancel_measurements()
         if not self.closed and not self.shutdown_complete and app.hide_window(self):
             return True
         if self.preview:
@@ -614,6 +614,7 @@ class Window(Adw.ApplicationWindow):
                 "apply", "restart", "updateProfiles", "updateProvider", "updateResources",
             )
             if changes_nodes:
+                self._cancel_measurements()
                 self.delays.clear()
                 self.delay_errors.clear()
                 self.last_proxies = None
@@ -621,6 +622,7 @@ class Window(Adw.ApplicationWindow):
                 "restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll",
             )
             if restored:
+                self._cancel_measurements()
                 self.catalog_panel.reset()
                 self.profiles_panel.reset()
                 if command["tool"].endswith("All"):
@@ -657,6 +659,7 @@ class Window(Adw.ApplicationWindow):
                         if profile["id"] == state["currentProfileID"]), None) if state else None
         scope = (current["id"], current.get("revision")) if current else None
         if scope != self.delay_scope:
+            self._cancel_measurements()
             self.delays.clear()
             self.delay_errors.clear()
             self.last_proxies = None
@@ -834,14 +837,23 @@ class Window(Adw.ApplicationWindow):
 
         self._submit(work, receive, action=True)
 
+    def _cancel_measurements(self):
+        for cancel in self.measurements.values():
+            cancel.set()
+        self.measurements.clear()
+        for _batch, single in self.node_measurements.values():
+            single.set()
+        self.node_measurements.clear()
+        self.measuring.clear()
+
     def measure_proxy(self, name):
-        scope = "node:" + name
-        if scope in self.measurements:
-            self.measurements[scope].set()
+        active = self.node_measurements.pop(name, None)
+        if active:
+            active[1].set()
             self.measuring.discard(name)
             self._render_proxies()
             return
-        self._measure([name], scope)
+        self._measure([name], ("node", name))
 
     def unfix_group(self):
         selected = self.group_picker.get_selected_item()
@@ -856,7 +868,14 @@ class Window(Adw.ApplicationWindow):
             return
         name = selected.get_string()
         if name in self.measurements:
-            self.measurements[name].set()
+            cancel = self.measurements.pop(name)
+            cancel.set()
+            for node, (batch, single) in list(self.node_measurements.items()):
+                if batch is cancel:
+                    single.set()
+                    self.node_measurements.pop(node, None)
+                    self.measuring.discard(node)
+            self._render_proxies()
             return
         members = self.data["proxies"]["proxies"].get(name, {}).get("all") or []
         self._measure(members, name)
@@ -866,11 +885,17 @@ class Window(Adw.ApplicationWindow):
             return
         cancel, controller, generation = threading.Event(), self.controller, self.generation
         self.measurements[scope] = cancel
-        def finish(name, delay, error):
+        tasks = {name: threading.Event() for name in dict.fromkeys(members) if name not in self.node_measurements}
+        for name, single in tasks.items():
+            self.node_measurements[name] = (cancel, single)
+            self.measuring.add(name)
+        def finish(name, single, delay, error):
+            if self.node_measurements.get(name) == (cancel, single):
+                self.node_measurements.pop(name, None)
+                self.measuring.discard(name)
             if self.closed or generation != self.generation:
                 return GLib.SOURCE_REMOVE
-            self.measuring.discard(name)
-            if not cancel.is_set():
+            if not cancel.is_set() and not single.is_set():
                 if error:
                     self.delay_errors[name] = error
                 else:
@@ -879,19 +904,15 @@ class Window(Adw.ApplicationWindow):
             self._render_proxies()
             return GLib.SOURCE_REMOVE
         def measure(name):
-            if cancel.is_set():
+            single = tasks[name]
+            if cancel.is_set() or single.is_set():
+                GLib.idle_add(finish, name, single, None, None)
                 return
-            GLib.idle_add(mark, name)
             try:
                 delay, error = controller.delay(name), None
             except ControllerError as error_value:
                 delay, error = None, str(error_value)
-            GLib.idle_add(finish, name, delay, error)
-        def mark(name):
-            if not self.closed and generation == self.generation and not cancel.is_set():
-                self.measuring.add(name)
-                self._render_proxies()
-            return GLib.SOURCE_REMOVE
+            GLib.idle_add(finish, name, single, delay, error)
         def completed():
             if self.measurements.get(scope) is cancel:
                 self.measurements.pop(scope, None)
@@ -900,7 +921,7 @@ class Window(Adw.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         def work():
             with ThreadPoolExecutor(max_workers=4) as pool:
-                list(pool.map(measure, dict.fromkeys(members)))
+                list(pool.map(measure, tasks))
             GLib.idle_add(completed)
         threading.Thread(target=work, daemon=True, name="zfly-latency").start()
         self._render_proxies()

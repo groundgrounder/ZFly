@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 HOST_PATHS = (
     "lib/application.dart", "lib/main.dart", "lib/providers/actions/profiles.dart",
     "lib/providers/database.dart", "test/providers/database_test.dart", "lib/native",

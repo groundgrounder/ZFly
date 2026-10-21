@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +13,27 @@ bundle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bundle)
 
 class PackagingTests(unittest.TestCase):
+    def test_preview_has_one_source_and_migration_tools_are_archived(self):
+        canonical = ROOT / 'runtime/zfly_runtime/preview.json'
+        swift = ROOT / 'macos/Sources/ZFlyKit/Resources/preview.json'
+        self.assertEqual(swift.resolve(), canonical)
+        self.assertFalse((ROOT / 'linux/zfly/preview.json').exists())
+        self.assertIn('自动选择', json.loads(canonical.read_text())['proxies']['proxies'])
+        for name in ('prepare-flclash-host.py', 'export-flclash-integration.py'):
+            self.assertFalse((ROOT / 'tools' / name).exists())
+            spec = importlib.util.spec_from_file_location('archived_tool', ROOT / 'integrations/flclash/tools' / name)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.assertEqual(module.ROOT, ROOT)
+
+    def test_english_keys_are_referenced_or_interpolation_formats(self):
+        source = '\n'.join(path.read_text() for path in (ROOT / 'macos/Sources').rglob('*.swift'))
+        english = ROOT / 'macos/Sources/ZFly/Resources/en.lproj/Localizable.strings'
+        keys = [json.loads(match[1]) for match in re.finditer(r'^("(?:[^"\\]|\\.)*")\s*=', english.read_text(), re.M)]
+        self.assertEqual(len(keys), len(set(keys)))
+        for key in keys:
+            self.assertTrue(key in source or re.search(r'%[@dfiusl]', key), key)
+
     def test_geodata_and_licenses_are_required_and_override_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

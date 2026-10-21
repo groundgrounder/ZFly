@@ -1,3 +1,4 @@
+from importlib.resources import files
 import base64
 import binascii
 import copy
@@ -136,7 +137,7 @@ class ManagementClient(Controller):
 class PreviewManagement:
     def __init__(self, controller=None):
         self._controller = controller
-        self._state = json.loads(Path(__file__).with_name("preview.json").read_text(encoding="utf-8"))["management"]
+        self._state = json.loads(files("zfly_runtime").joinpath("preview.json").read_text(encoding="utf-8"))["management"]
         for profile in self._state.get("profiles", []):
             profile["revision"] = "preview:" + profile["id"]
         self._files = {}

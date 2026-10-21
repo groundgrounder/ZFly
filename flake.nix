@@ -25,21 +25,21 @@
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "zfly";
             version = builtins.head (builtins.match ".*__version__ = \"([^\"]+)\".*" (builtins.readFile ./runtime/zfly_runtime/__init__.py));
-            src = ./linux;
+            src = ./.;
             nativeBuildInputs = [ pkgs.wrapGAppsHook4 pkgs.gobject-introspection pkgs.makeWrapper ];
             buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme ];
             dontBuild = true;
             doCheck = true;
             checkPhase = ''
               export PYTHONDONTWRITEBYTECODE=1
-              PYTHONPATH=.:${./runtime} ${python}/bin/python3 -m unittest discover -s tests -v
-              PYTHONPATH=${./runtime} ${python}/bin/python3 -m unittest discover -s ${./runtime/tests} -v
+              PYTHONPATH=linux:runtime ${python}/bin/python3 -m unittest discover -s linux/tests -v
+              PYTHONPATH=runtime ${python}/bin/python3 -m unittest discover -s runtime/tests -v
             '';
             installPhase = ''
               runHook preInstall
               mkdir -p "$out/share/zfly" "$out/bin"
-              cp -r zfly "$out/share/zfly/"
-              cp -r ${./runtime/zfly_runtime} "$out/share/zfly/zfly_runtime"
+              cp -r linux/zfly "$out/share/zfly/"
+              cp -r runtime/zfly_runtime "$out/share/zfly/zfly_runtime"
               cp -r ${desktopItem}/share/applications "$out/share/"
               install -Dm644 ${./assets/icon.svg} "$out/share/icons/hicolor/scalable/apps/io.github.zfly.ZFly.svg"
               for size in 16 32 48 64 128 256 512 1024; do

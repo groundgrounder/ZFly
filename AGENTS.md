@@ -1,6 +1,6 @@
 # ZFly
 
-ZFly is a standalone application. It owns profiles, subscriptions, core processes, persistent settings and system proxy leases. It must work without a running or installed FlClash app. `FlClash/` is a preserved, separate upstream Git repository; keep its history and working tree unchanged.
+ZFly is a standalone application. It owns profiles, subscriptions, core processes, persistent settings and system proxy leases. It must work without a running or installed FlClash app. `FlClash/` is an optional external upstream checkout, absent in this workspace; if present, keep its history and working tree unchanged. `build/flclash-host/` is the current read-only source snapshot.
 
 - macOS: SwiftUI app `macos/Sources/ZFly`, shared adapter `macos/Sources/ZFlyKit`. Build with `sh macos/build-app.sh`.
 - Linux: GTK 4 / libadwaita app `linux/zfly`. Package with the root `flake.nix`.

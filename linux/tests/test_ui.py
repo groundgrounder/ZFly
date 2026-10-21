@@ -450,7 +450,7 @@ class InterfaceTests(unittest.TestCase):
     def measure_node(self, name, delay):
         with patch.object(self.window.controller, "delay", return_value=delay):
             self.window._action("delay", name)
-            self.wait(lambda: not self.window.busy)
+            self.wait(lambda: not self.window.measurements)
         self.assertIn(f"{delay} ms", self.proxy_labels(name))
 
     def test_profile_switch_discards_another_profiles_latency(self):
@@ -492,7 +492,7 @@ class InterfaceTests(unittest.TestCase):
             return original(name)
         with patch.object(self.window.controller, "delay", side_effect=measure):
             self.window.measure_group()
-            self.wait(lambda: not self.window.busy)
+            self.wait(lambda: not self.window.measurements)
         labels = self.proxy_labels("东京 / Tokyo")
         self.assertIn("测速失败", labels)
         self.assertNotIn("不可用", labels)
@@ -632,6 +632,54 @@ class InterfaceTests(unittest.TestCase):
         group = Adw.PreferencesGroup()
         row = choice(group, 'value', ['known'], 'future')
         self.assertEqual(chosen(row), 'future')
+
+    def test_cancel_node_in_group_does_not_start_another_request(self):
+        release, started = threading.Event(), threading.Event()
+        self.window.navigate_to(2)
+        calls = []
+        def delay(name):
+            calls.append(name)
+            started.set()
+            release.wait(3)
+            return 9876
+        with patch.object(self.window.controller, 'delay', side_effect=delay):
+            try:
+                self.window._measure(['东京 / Tokyo', '新加坡'], 'test-group')
+                self.wait(started.is_set)
+                self.assertFalse(self.window.busy)
+                self.window.measure_proxy('东京 / Tokyo')
+                self.assertNotIn('东京 / Tokyo', self.window.measuring)
+            finally:
+                release.set()
+            self.wait(lambda: not self.window.measurements)
+        self.assertEqual(calls.count('东京 / Tokyo'), 1)
+        self.assertNotEqual(self.window.delays.get('东京 / Tokyo'), 9876)
+
+    def test_overlapping_measurements_keep_progress_and_group_cancel_clears_it(self):
+        release, started = threading.Event(), threading.Event()
+        self.window.navigate_to(2)
+        calls = []
+        group = self.window.group_picker.get_selected_item().get_string()
+        def delay(name):
+            calls.append(name)
+            started.set()
+            release.wait(3)
+            return 9876
+        with patch.object(self.window.controller, 'delay', side_effect=delay):
+            try:
+                self.window._measure(['东京 / Tokyo'], group)
+                self.wait(started.is_set)
+                self.window._measure(['东京 / Tokyo'], 'overlap')
+                self.pump()
+                self.assertIn('东京 / Tokyo', self.window.measuring)
+                self.window.measure_group()
+                self.assertNotIn('东京 / Tokyo', self.window.measuring)
+                self.assertNotIn(group, self.window.measurements)
+            finally:
+                release.set()
+            self.wait(lambda: not self.window.measurements)
+        self.assertEqual(calls, ['东京 / Tokyo'])
+        self.assertNotEqual(self.window.delays.get('东京 / Tokyo'), 9876)
 
     def test_connection_without_id_still_renders(self):
         self.window.data['connections']['connections'] = [{'metadata': {'host': 'example.test'}}]

@@ -104,10 +104,12 @@ def main():
     parser.add_argument("--core", default=os.environ.get("ZFLY_CORE"))
     parser.add_argument("--core-kind", choices=("ipc", "mihomo"), default=os.environ.get("ZFLY_CORE_KIND", "ipc"))
     parser.add_argument("--resources", type=Path)
-    parser.add_argument("--ready-file", type=Path, required=True)
+    parser.add_argument("--ready-file", type=Path)
     parser.add_argument("--parent-pid", type=int)
     parser.add_argument("--recover-state-from", type=Path, help="Restore a validated ZFly JSON backup without starting a core")
     args = parser.parse_args()
+    if not args.ready_file and not args.recover_state_from:
+        parser.error("--ready-file is required when starting the runtime")
     os.umask(0o077)
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -130,7 +132,9 @@ def main():
             if storage.path.exists():
                 atomic_write(storage.directory / ("state.before-recovery-" + secrets.token_hex(8) + ".json"), storage.path.read_bytes())
             storage.save(recovered)
-            atomic_write(args.ready_file, encode_json({"recovered": True}))
+            if args.ready_file:
+                atomic_write(args.ready_file, encode_json({"recovered": True}))
+            print("ZFly state recovered.")
             return 0
         core_path = args.core or shutil.which("mihomo")
         if not core_path:
@@ -167,7 +171,10 @@ def main():
         return 0
     except Exception as error:
         message = str(error) if isinstance(error, RuntimeErrorMessage) else "ZFly 运行时启动失败，请检查应用资源和数据目录权限。"
-        atomic_write(args.ready_file, encode_json({"error": message}))
+        if args.ready_file:
+            atomic_write(args.ready_file, encode_json({"error": message}))
+        else:
+            print(message, file=sys.stderr)
         return 1
     finally:
         if server:

@@ -1,3 +1,5 @@
+> 历史记录：仅描述当时的修改与验证。当前结果见 [审计修复验证](../audit-validation-2026-10-21.md)。旧构建截图与临时日志未归档。
+
 # macOS 性能记录
 
 2026-10-19：速率、流量总计、连接流量和订阅用量统一使用固定的英文 `B / KB / MB / GB / TB / PB / EB`，沿用 1024 进位。速率附加 `/s`，小数点固定为英文格式，零值显示 `0 B`。
@@ -16,7 +18,7 @@
 
 ```sh
 ZFLY_SWIFTPM_DISABLE_SANDBOX=1 \
-ZFLY_CORE=/Applications/ZFly.app/Contents/Helpers/ZFlyCore \
+ZFLY_CORE=/path/to/standalone/ZFlyCore \
 ZFLY_CORE_KIND=ipc \
 ZFLY_GEODATA="$PWD/build/flclash-host/assets/data" sh macos/build-app.sh
 ```

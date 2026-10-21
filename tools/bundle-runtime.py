@@ -71,7 +71,11 @@ def verify_artifacts(app):
         path = app / name
         if not path.is_file() or not path.stat().st_size:
             raise SystemExit("构建产物缺失或为空：" + name)
-    if not list(resources.rglob("preview.json")) or not list(resources.rglob("en.lproj/Localizable.strings")):
+    previews = list(resources.rglob("preview.json"))
+    canonical = (ROOT / "runtime/zfly_runtime/preview.json").read_bytes()
+    if not previews or any(not path.is_file() or path.read_bytes() != canonical for path in previews):
+        raise SystemExit("构建产物预览资源缺失或与唯一来源不一致。")
+    if not list(resources.rglob("en.lproj/Localizable.strings")):
         raise SystemExit("构建产物缺少预览或本地化资源。")
     with (app / "Contents/Info.plist").open("rb") as stream:
         metadata = plistlib.load(stream)

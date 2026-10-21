@@ -26,7 +26,8 @@ binary_dir=$(swift build --package-path "$package_dir" -c release -debug-info-fo
   --disable-netrc --disable-keychain "$@")
 
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
-cp "$binary_dir/ZFly" "$app_dir/Contents/MacOS/ZFly"
+cp "$binary_dir/ZFly" "$app_dir/Contents/MacOS/.ZFly.new"
+mv -f "$app_dir/Contents/MacOS/.ZFly.new" "$app_dir/Contents/MacOS/ZFly"
 for bundle in "$binary_dir"/*.bundle; do
   [ -d "$bundle" ] || continue
   bundle_name=$(basename "$bundle")

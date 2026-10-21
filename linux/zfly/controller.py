@@ -1,3 +1,4 @@
+from importlib.resources import files
 import copy
 import ipaddress
 import http.client
@@ -190,7 +191,7 @@ class Controller:
 class PreviewController:
     def __init__(self):
         self.endpoint = "演示模式 · 不连接核心"
-        self._data = json.loads(Path(__file__).with_name("preview.json").read_text(encoding="utf-8"))
+        self._data = json.loads(files("zfly_runtime").joinpath("preview.json").read_text(encoding="utf-8"))
 
     def snapshot(self):
         return copy.deepcopy(self._data)

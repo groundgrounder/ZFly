@@ -16,6 +16,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import errno
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,7 +30,9 @@ def verify(app):
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
-    except PermissionError:
+    except OSError as error:
+        if error.errno not in (errno.EACCES, errno.EPERM):
+            raise
         print("SKIP: this sandbox prohibits loopback socket binding; no processes or host proxy settings were changed.")
         return 77
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -93,9 +96,11 @@ def verify(app):
                 request("GET", "/state", auth=False)
                 raise AssertionError("Missing authentication accepted")
             except urllib.error.HTTPError as error:
-                assert error.code == 401
+                if not (error.code == 401):
+                    raise RuntimeError('Runtime verification failed: error.code == 401')
             state = request("GET", "/state")
-            assert not state["running"] and not state["network"]["systemProxy"] and not state["network"]["tunEnabled"]
+            if not (not state["running"] and not state["network"]["systemProxy"] and not state["network"]["tunEnabled"]):
+                raise RuntimeError('Runtime verification failed: not state["running"] and not state["network"]["systemProxy"] and not state["network"]["tunEnabled"]')
             config = "proxies: []\nproxy-groups:\n  - name: Local Test\n    type: select\n    proxies: [DIRECT, REJECT]\nrules:\n  - MATCH,Local Test\n"
             state = action("profile.import", label="Isolated smoke test", data=base64.b64encode(config.encode()).decode())["state"]
             identity = state["currentProfileID"]
@@ -103,13 +108,16 @@ def verify(app):
             action("network.save", expected=state["network"], network=network)
             for cycle in range(3):
                 state = action("running.set", running=True)["state"]
-                assert state["running"]
+                if not (state["running"]):
+                    raise RuntimeError('Runtime verification failed: state["running"]')
                 # Verify the inbound proxy responds locally; do not request any destination.
                 with socket.create_connection(("127.0.0.1", port), timeout=3) as connection:
                     connection.sendall(b"\x05\x01\x00")
-                    assert connection.recv(2) == b"\x05\x00", "SOCKS5 handshake failed"
+                    if not (connection.recv(2) == b"\x05\x00"):
+                        raise RuntimeError("SOCKS5 handshake failed")
                 if cycle < 2:
-                    assert not action("running.set", running=False)["state"]["running"]
+                    if not (not action("running.set", running=False)["state"]["running"]):
+                        raise RuntimeError('Runtime verification failed: not action("running.set", running=False)["state"]["running"]')
                     assert_proxy_port_released()
             action("proxy.select", group="Local Test", proxy="REJECT")
             request("PATCH", "/configs", {"mode": "global"})
@@ -120,15 +128,22 @@ def verify(app):
             stop()
             ready = start()
             state = request("GET", "/state")
-            assert state["currentProfileID"] == identity and not state["running"]
-            assert state["network"]["mode"] == "global"
-            assert request("GET", "/proxies")["proxies"]["Local Test"]["now"] == "REJECT"
-            assert action("running.set", running=True)["state"]["running"]
+            if not (state["currentProfileID"] == identity and not state["running"]):
+                raise RuntimeError('Runtime verification failed: state["currentProfileID"] == identity and not state["running"]')
+            if not (state["network"]["mode"] == "global"):
+                raise RuntimeError('Runtime verification failed: state["network"]["mode"] == "global"')
+            if not (request("GET", "/proxies")["proxies"]["Local Test"]["now"] == "REJECT"):
+                raise RuntimeError('Runtime verification failed: request("GET", "/proxies")["proxies"]["Local Test"]["now"] == "REJECT"')
+            if not (action("running.set", running=True)["state"]["running"]):
+                raise RuntimeError('Runtime verification failed: action("running.set", running=True)["state"]["running"]')
             action("tool.run", tool="restoreLocalAll", data=archive["data"])
-            assert not request("GET", "/state")["running"]
+            if not (not request("GET", "/state")["running"]):
+                raise RuntimeError('Runtime verification failed: not request("GET", "/state")["running"]')
             assert_proxy_port_released()
-            assert (scratch / "data/state.json").stat().st_mode & 0o777 == 0o600
-            assert not (scratch / "data/proxy-lease.json").exists()
+            if not ((scratch / "data/state.json").stat().st_mode & 0o777 == 0o600):
+                raise RuntimeError('Runtime verification failed: (scratch / "data/state.json").stat().st_mode & 0o777 == 0o600')
+            if not (not (scratch / "data/proxy-lease.json").exists()):
+                raise RuntimeError('Runtime verification failed: not (scratch / "data/proxy-lease.json").exists()')
             print("PASS: owned core start/stop/restart, SOCKS5 handshake, import, selection, persistence, restore, auth and private state.")
             return 0
         finally:

@@ -8,6 +8,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import os
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,9 +19,9 @@ ICNS = ((b"icp4", 16), (b"icp5", 32), (b"icp6", 64), (b"ic07", 128),
 
 
 def library_renderer():
-    bundled = Path("/Applications/Inkscape.app/Contents/Resources/lib")
+    bundled = Path(os.environ["ZFLY_ICON_LIBRARY_DIR"]).expanduser() if os.environ.get("ZFLY_ICON_LIBRARY_DIR") else None
     names = (find_library("rsvg-2"), find_library("cairo"), find_library("gobject-2.0"))
-    if not all(names) and (bundled / "librsvg-2.2.dylib").is_file():
+    if not all(names) and bundled and (bundled / "librsvg-2.2.dylib").is_file():
         names = tuple(str(bundled / name) for name in
                       ("librsvg-2.2.dylib", "libcairo.2.dylib", "libgobject-2.0.0.dylib"))
     if not all(names):

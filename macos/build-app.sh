@@ -51,8 +51,8 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
   <key>CFBundleIconFile</key><string>ZFly</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>build</string>
+  <key>CFBundleVersion</key><string>build</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppTransportSecurity</key><dict>
@@ -65,7 +65,16 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 cp "$repo_dir/assets/icons/ZFly.icns" "$app_dir/Contents/Resources/ZFly.icns"
+python3 - "$repo_dir/runtime/zfly_runtime/__init__.py" "$app_dir/Contents/Info.plist" <<'PY'
+import ast, plistlib, sys
+version = next(node.value.value for node in ast.parse(open(sys.argv[1]).read()).body if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "__version__" for t in node.targets))
+with open(sys.argv[2], "rb") as stream: metadata = plistlib.load(stream)
+metadata["CFBundleShortVersionString"] = version
+metadata["CFBundleVersion"] = version
+with open(sys.argv[2], "wb") as stream: plistlib.dump(metadata, stream)
+PY
 python3 "$repo_dir/tools/bundle-runtime.py" "$app_dir"
 codesign --force --sign - "$app_dir"
 codesign --verify --deep --strict "$app_dir"
+python3 "$repo_dir/tools/bundle-runtime.py" --verify-only "$app_dir"
 printf '%s\n' "$app_dir"

@@ -24,11 +24,17 @@
         in {
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "zfly";
-            version = "0.2.0";
+            version = builtins.head (builtins.match ".*__version__ = \"([^\"]+)\".*" (builtins.readFile ./runtime/zfly_runtime/__init__.py));
             src = ./linux;
             nativeBuildInputs = [ pkgs.wrapGAppsHook4 pkgs.gobject-introspection pkgs.makeWrapper ];
             buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme ];
             dontBuild = true;
+            doCheck = true;
+            checkPhase = ''
+              export PYTHONDONTWRITEBYTECODE=1
+              PYTHONPATH=.:${./runtime} ${python}/bin/python3 -m unittest discover -s tests -v
+              PYTHONPATH=${./runtime} ${python}/bin/python3 -m unittest discover -s ${./runtime/tests} -v
+            '';
             installPhase = ''
               runHook preInstall
               mkdir -p "$out/share/zfly" "$out/bin"
@@ -64,6 +70,7 @@
             };
           };
         });
+      checks = forAllSystems (system: { package = self.packages.${system}.default; });
       apps = forAllSystems (system: {
         default = {
           type = "app";

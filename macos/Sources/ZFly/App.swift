@@ -22,12 +22,13 @@ struct ZFlyApp: App {
             MainView().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
                 .frame(minWidth: 900, minHeight: 640)
-                .tint(ZFlyPalette.tint)
+                .modifier(AppAccentStyle())
                 .onChange(of: scheme, initial: true) { _, value in
                     AppAppearance.apply(value, to: NSApplication.shared)
                 }
                 .onAppear {
                     appDelegate.reopenMainWindow = { openWindow(id: "main") }
+                    appDelegate.installStatusMenu(store: store)
                     appDelegate.prepareForTermination = { store.stopPolling() }
                     appDelegate.previewReady = { store.connected && store.snapshot != nil && store.management != nil }
                     store.startPolling()
@@ -44,15 +45,11 @@ struct ZFlyApp: App {
                 Button("刷新状态") { Task { await store.refreshStatus() } }.keyboardShortcut("r")
             }
         }
-        MenuBarExtra("ZFly", systemImage: store.management?.running == true ? "paperplane.fill" : "paperplane") {
-            StatusMenu().environment(store)
-                .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
-        }
         Settings {
             AppSettingsView().environment(store)
                 .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .current)
                 .frame(width: 720, height: 720)
-                .tint(ZFlyPalette.tint)
+                .modifier(AppAccentStyle())
                 .onChange(of: scheme, initial: true) { _, value in
                     AppAppearance.apply(value, to: NSApplication.shared)
                 }
@@ -87,6 +84,7 @@ private enum Page: String, CaseIterable, Identifiable {
 }
 
 private struct SidebarButton: View {
+    @Environment(\.zflyAccent) private var accent
     let page: Page
     let selected: Bool
     let action: () -> Void
@@ -97,17 +95,17 @@ private struct SidebarButton: View {
         Button(action: action) {
             HStack(spacing: 11) {
                 Image(systemName: page.icon).font(.system(size: 15, weight: .medium)).frame(width: 21)
-                    .foregroundStyle(selected ? ZFlyPalette.tint : Color.secondary)
+                    .foregroundStyle(selected ? accent.color : Color.secondary)
                 Text(page.title).font(.system(size: 13, weight: selected ? .semibold : .medium))
                     .lineLimit(1).minimumScaleFactor(0.85)
                 Spacer(minLength: 0)
-                if selected { Capsule().fill(ZFlyPalette.tint).frame(width: 3, height: 14) }
+                if selected { Capsule().fill(accent.color).frame(width: 3, height: 14) }
             }
             .padding(.horizontal, 11).frame(height: 38)
             .contentShape(RoundedRectangle(cornerRadius: ZFlyMetrics.controlRadius))
             .background {
                 RoundedRectangle(cornerRadius: ZFlyMetrics.controlRadius)
-                    .fill(selected ? ZFlyPalette.tint.opacity(0.10) : Color.primary.opacity(hovering ? 0.04 : 0))
+                    .fill(selected ? accent.color.opacity(0.10) : Color.primary.opacity(hovering ? 0.04 : 0))
             }
         }
         .buttonStyle(.plain).foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.75))
@@ -120,6 +118,7 @@ private struct SidebarButton: View {
 }
 
 private struct MainView: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = Page.initial
@@ -228,7 +227,7 @@ private struct MainView: View {
 
     private var statusBar: some View {
         HStack(spacing: 8) {
-            Circle().fill(store.preview ? ZFlyPalette.tint : (store.connected ? Color.green : .orange)).frame(width: 5, height: 5)
+            Circle().fill(store.preview ? accent.color : (store.connected ? Color.green : .orange)).frame(width: 5, height: 5)
             Text(verbatim: store.preview ? "演示模式 · 隔离运行时" : store.status).lineLimit(1)
             Spacer(minLength: 8)
             if store.isBusy || store.refreshingStatus { ProgressView().controlSize(.mini) }

@@ -35,7 +35,17 @@ enum PreviewOptions {
     // application's preferences, including when the bundle identifier matches.
     @MainActor static let preferences: UserDefaults = {
         guard CommandLine.arguments.contains("--safe-mode") else { return .standard }
-        return PreviewPreferences()
+        let preferences = PreviewPreferences()
+        if let accent = value("--preview-accent"), AppAccent(rawValue: accent) != nil {
+            preferences.set(accent, forKey: "appearance.accent")
+        }
+        if let scheme = value("--preview-scheme"), AppAppearance(rawValue: scheme) != nil {
+            preferences.set(scheme, forKey: "appearance.scheme")
+        }
+        if let language = value("--preview-language"), AppLanguage(rawValue: language) != nil {
+            preferences.set(language, forKey: "appearance.language")
+        }
+        return preferences
     }()
 
     static func value(_ option: String) -> String? {

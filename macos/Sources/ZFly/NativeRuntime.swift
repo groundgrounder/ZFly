@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Darwin
+import ScreenCaptureKit
 
 extension Notification.Name {
     static let zflyPrepareToQuit = Notification.Name("ZFlyPrepareToQuit")
@@ -196,9 +197,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var prepareForTermination: (() -> Void)?
     var previewReady: (() -> Bool)?
     var reopenMainWindow: (() -> Void)?
+    private var statusMenu: StatusMenuController?
     private var terminating = false
     private var suppressInitialWindow = false
     private let initializedWindows = NSHashTable<NSWindow>.weakObjects()
+
+    func installStatusMenu(store: Store) {
+        guard statusMenu == nil else { return }
+        statusMenu = StatusMenuController(store: store) { [weak self] in self?.reopenMainWindow?() }
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         suppressInitialWindow = !CommandLine.arguments.contains("--safe-mode")
@@ -258,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func isAppWindow(_ window: NSWindow) -> Bool {
-        // MenuBarExtra menus and sheets must not keep the app in the Dock.
+        // Status popovers and sheets must not keep the app in the Dock.
         window.styleMask.contains(.titled) && window.level == .normal && window.parent == nil && window.sheetParent == nil
     }
 
@@ -267,7 +274,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let index = CommandLine.arguments.firstIndex(of: "--render-preview"),
               CommandLine.arguments.indices.contains(index + 1) else { return }
         let output = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+        let previewMenu = CommandLine.arguments.contains("--preview-menu")
         DispatchQueue.main.async {
+            guard !previewMenu else { return }
             guard let size = PreviewOptions.value("--preview-size")?.split(separator: "x"), size.count == 2,
                   let width = Double(size[0]), let height = Double(size[1]),
                   (900...2400).contains(width), (640...1600).contains(height),
@@ -277,24 +286,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Task {
             let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-            while previewReady?() != true, ContinuousClock.now < deadline {
+            while (previewReady?() != true || (previewMenu && statusMenu == nil)), ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
             }
-            guard previewReady?() == true else {
+            guard previewReady?() == true, !previewMenu || statusMenu != nil else {
                 FileHandle.standardError.write(Data("演示截图失败：等待运行时连接和首个快照超时。\n".utf8))
                 await finishPreview()
                 return
             }
+            NSApp.activate(ignoringOtherApps: true)
+            try? await Task.sleep(for: .milliseconds(100))
+            let window: NSWindow?
+            if previewMenu {
+                window = statusMenu?.show()
+                try? await Task.sleep(for: .milliseconds(550))
+                if CommandLine.arguments.contains("--preview-menu-tab"), let window,
+                   let tab = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                             timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil,
+                                             characters: "\t", charactersIgnoringModifiers: "\t",
+                                             isARepeat: false, keyCode: 48) {
+                    window.sendEvent(tab)
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            } else {
+                window = NSApplication.shared.windows.first(where: { $0.title != "" && $0.isVisible })
+            }
+            if let accent = PreviewOptions.value("--preview-accent-after"), AppAccent(rawValue: accent) != nil {
+                PreviewOptions.preferences.set(accent, forKey: "appearance.accent")
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if let scheme = PreviewOptions.value("--preview-scheme-after"), AppAppearance(rawValue: scheme) != nil {
+                PreviewOptions.preferences.set(scheme, forKey: "appearance.scheme")
+                try? await Task.sleep(for: .milliseconds(250))
+            }
             // Give SwiftUI a layout pass after the first published snapshot.
             await Task.yield()
-            guard let view = NSApplication.shared.windows.first(where: { $0.title != "" && $0.isVisible })?.contentView,
-                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            guard let window else {
                 await finishPreview()
                 return
             }
-            view.layoutSubtreeIfNeeded()
-            view.cacheDisplay(in: view.bounds, to: bitmap)
+            FileHandle.standardOutput.write(Data("Preview active=\(NSApp.isActive) key=\(window.isKeyWindow) responder=\(String(describing: window.firstResponder.map { type(of: $0) }))\n".utf8))
             do {
+                let bitmap: NSBitmapImageRep
+                if #available(macOS 14.4, *) {
+                    // Capture this process's rendered window, including native
+                    // controls and materials, without desktop capture access.
+                    let content = try await SCShareableContent.currentProcess
+                    guard let ownWindow = content.windows.first(where: {
+                        $0.windowID == CGWindowID(window.windowNumber)
+                            && $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+                    }) else { throw CocoaError(.fileReadUnknown) }
+                    let filter = SCContentFilter(desktopIndependentWindow: ownWindow)
+                    let configuration = SCStreamConfiguration()
+                    configuration.width = Int(window.frame.width * window.backingScaleFactor)
+                    configuration.height = Int(window.frame.height * window.backingScaleFactor)
+                    configuration.showsCursor = false
+                    configuration.ignoreShadowsSingleWindow = true
+                    configuration.shouldBeOpaque = false
+                    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+                    bitmap = NSBitmapImageRep(cgImage: image)
+                } else {
+                    guard !previewMenu else {
+                        throw NSError(domain: "ZFly.Preview", code: 1, userInfo: [NSLocalizedDescriptionKey: "菜单栏外框截图需要 macOS 14.4 或更新版本。"])
+                    }
+                    guard let view = window.contentView,
+                          let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                        throw CocoaError(.fileReadUnknown)
+                    }
+                    view.layoutSubtreeIfNeeded()
+                    view.cacheDisplay(in: view.bounds, to: representation)
+                    bitmap = representation
+                }
                 guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
                 try data.write(to: output, options: .atomic)
             } catch {

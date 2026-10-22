@@ -41,6 +41,7 @@ struct ManagementView: View {
 }
 
 private struct ProfileManagement: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     @Environment(\.locale) private var locale
     let state: ManagedState
@@ -80,7 +81,7 @@ private struct ProfileManagement: View {
             }
             if let message {
                 Label { Text(verbatim: message) } icon: { Image(systemName: failed ? "exclamationmark.circle" : "checkmark.circle") }
-                    .font(.callout).foregroundStyle(failed ? Color.red : ZFlyPalette.tint).textSelection(.enabled)
+                    .font(.callout).foregroundStyle(failed ? Color.red : accent.color).textSelection(.enabled)
             }
         }.padding(ZFlyMetrics.pagePadding)
         .sheet(isPresented: $adding) { ProfileProperties(profile: nil) }
@@ -132,9 +133,9 @@ private struct ProfileManagement: View {
         return VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Image(systemName: profile.type == "url" ? "arrow.triangle.2.circlepath" : "doc.text")
-                    .font(.system(size: 18)).foregroundStyle(selected ? ZFlyPalette.tint : Color.secondary)
+                    .font(.system(size: 18)).foregroundStyle(selected ? accent.color : Color.secondary)
                     .frame(width: 40, height: 40)
-                    .background((selected ? ZFlyPalette.tint : Color.secondary).opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
+                    .background((selected ? accent.color : Color.secondary).opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(profile.label).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                     HStack(spacing: 6) {
@@ -149,7 +150,7 @@ private struct ProfileManagement: View {
                     }.font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                if selected { StatusBadge(title: "使用中", color: ZFlyPalette.tint) }
+                if selected { StatusBadge(title: "使用中", color: accent.color) }
                 Menu {
                     Button("属性") { editing = profile }
                     Button(profile.type == "file" ? "查看 / 编辑" : "查看") { read(profile, export: false) }
@@ -163,7 +164,7 @@ private struct ProfileManagement: View {
                 if let total = profile.total, total > 0 {
                     VStack(alignment: .leading, spacing: 8) {
                         ProgressView(value: min(Double(usedBytes) / Double(total), 1))
-                            .tint(ZFlyPalette.tint)
+                            .tint(accent.color)
                         HStack {
                             Text("已用 \(bytes(usedBytes)) / \(bytes(total))")
                             Spacer()

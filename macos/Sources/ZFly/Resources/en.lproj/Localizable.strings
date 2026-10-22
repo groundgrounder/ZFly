@@ -312,6 +312,9 @@
 "工作区" = "Workspace";
 "管理" = "Manage";
 "当前配置" = "Current profile";
+"强调色" = "Accent color";
+"ZFly 青绿" = "ZFly Teal";
+"强调色同步用于主窗口与菜单栏面板。" = "The accent color applies to both the main window and the menu bar panel.";
 "未选择配置" = "No profile selected";
 "切换配置" = "Switch profile";
 "名称" = "Name";

@@ -14,7 +14,7 @@ enum ZFlyMetrics {
 }
 
 enum ZFlyPalette {
-    static let tint = Color(nsColor: NSColor(name: nil) { appearance in
+    static let teal = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.34, green: 0.73, blue: 0.74, alpha: 1)
             : NSColor(srgbRed: 0.12, green: 0.48, blue: 0.51, alpha: 1)
@@ -24,10 +24,51 @@ enum ZFlyPalette {
             ? NSColor(srgbRed: 0.69, green: 0.65, blue: 0.91, alpha: 1)
             : NSColor(srgbRed: 0.49, green: 0.44, blue: 0.76, alpha: 1)
     })
-    static let action = Color(red: 0.12, green: 0.46, blue: 0.49)
+}
+
+enum AppAccent: String {
+    case system, teal
+
+    var color: Color {
+        switch self {
+        case .system: Color(nsColor: .controlAccentColor)
+        case .teal: ZFlyPalette.teal
+        }
+    }
+
+    var actionColor: Color {
+        switch self {
+        case .system: color
+        case .teal: Color(red: 0.12, green: 0.46, blue: 0.49)
+        }
+    }
+}
+
+private struct AppAccentKey: EnvironmentKey {
+    static let defaultValue = AppAccent.system
+}
+
+extension EnvironmentValues {
+    var zflyAccent: AppAccent {
+        get { self[AppAccentKey.self] }
+        set { self[AppAccentKey.self] = newValue }
+    }
+}
+
+/// Every hosting root observes the same preference, including the status popover.
+struct AppAccentStyle: ViewModifier {
+    @AppStorage("appearance.accent", store: PreviewOptions.preferences) private var preference = AppAccent.system.rawValue
+
+    func body(content: Content) -> some View {
+        let accent = AppAccent(rawValue: preference) ?? .system
+        // The macOS accent environment preserves native picker bezels in both appearances.
+        content.environment(\.zflyAccent, accent)
+            .accentColor(accent == .system ? nil : accent.color)
+    }
 }
 
 struct WindowBackdrop: View {
+    @Environment(\.zflyAccent) private var accent
     @AppStorage("appearance.ambient", store: PreviewOptions.preferences) private var ambient = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -36,7 +77,7 @@ struct WindowBackdrop: View {
         (colorScheme == .dark ? Color(red: 0.09, green: 0.10, blue: 0.11) : Color(nsColor: .windowBackgroundColor))
             .overlay(alignment: .topTrailing) {
                 if ambient && !reduceTransparency {
-                    RadialGradient(colors: [ZFlyPalette.tint.opacity(colorScheme == .dark ? 0.08 : 0.035), .clear],
+                    RadialGradient(colors: [accent.color.opacity(colorScheme == .dark ? 0.08 : 0.035), .clear],
                                    center: .topTrailing, startRadius: 0, endRadius: 600)
                 }
             }
@@ -63,6 +104,7 @@ struct SidebarSurface: ViewModifier {
 
 /// Text and charts use stable surfaces, independently of the sidebar material.
 struct SurfacePanel: ViewModifier {
+    @Environment(\.zflyAccent) private var accent
     var radius: CGFloat = ZFlyMetrics.panelRadius
     var selected = false
     @Environment(\.colorScheme) private var colorScheme
@@ -72,7 +114,7 @@ struct SurfacePanel: ViewModifier {
         content
             .background(colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.15) : Color(nsColor: .controlBackgroundColor), in: shape)
             .overlay {
-                shape.strokeBorder(selected ? ZFlyPalette.tint.opacity(0.5) : Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.065), lineWidth: 1)
+                shape.strokeBorder(selected ? accent.color.opacity(0.5) : Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.065), lineWidth: 1)
                     .allowsHitTesting(false)
             }
     }
@@ -158,6 +200,7 @@ private struct EqualWidthTabs: Layout {
 }
 
 struct SectionTabs<Value: Hashable>: View {
+    @Environment(\.zflyAccent) private var accent
     let title: LocalizedStringKey
     @Binding var selection: Value
     let items: [SectionTab<Value>]
@@ -169,7 +212,7 @@ struct SectionTabs<Value: Hashable>: View {
                 Button { selection = item.value } label: {
                     Label(item.title, systemImage: item.icon)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(selection == item.value ? ZFlyPalette.tint : Color.secondary)
+                        .foregroundStyle(selection == item.value ? accent.color : Color.secondary)
                         .lineLimit(1).minimumScaleFactor(0.85)
                         .padding(.horizontal, 13).frame(maxWidth: .infinity).frame(height: 36)
                         .background {
@@ -254,6 +297,7 @@ struct ToolAction: View {
 }
 
 struct ZFlyButtonStyle: ButtonStyle {
+    @Environment(\.zflyAccent) private var accent
     var prominent = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
@@ -265,7 +309,7 @@ struct ZFlyButtonStyle: ButtonStyle {
             .padding(.horizontal, 12).frame(minHeight: ZFlyMetrics.controlHeight)
             .background {
                 RoundedRectangle(cornerRadius: ZFlyMetrics.controlRadius, style: .continuous)
-                    .fill(prominent ? ZFlyPalette.action.opacity(configuration.isPressed ? 0.8 : 1) : Color.primary.opacity(configuration.isPressed ? 0.09 : 0.045))
+                    .fill(prominent ? accent.actionColor.opacity(configuration.isPressed ? 0.8 : 1) : Color.primary.opacity(configuration.isPressed ? 0.09 : 0.045))
                     .overlay {
                         RoundedRectangle(cornerRadius: ZFlyMetrics.controlRadius, style: .continuous)
                             .strokeBorder(prominent ? Color.white.opacity(0.1) : Color.primary.opacity(0.07), lineWidth: 1)

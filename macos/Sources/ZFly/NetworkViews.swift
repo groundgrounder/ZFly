@@ -73,6 +73,7 @@ struct ProxiesView: View {
 }
 
 private struct ProxyCard: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let name: String
@@ -82,7 +83,7 @@ private struct ProxyCard: View {
     private var delay: Int? { store.delays[name] ?? store.snapshot?.proxies.proxies[name]?.lastDelay }
     private var delayColor: Color {
         guard let delay else { return .secondary }
-        return delay <= 0 ? .red : (delay < 150 ? ZFlyPalette.tint : (delay < 400 ? .orange : .red))
+        return delay <= 0 ? .red : (delay < 150 ? accent.color : (delay < 400 ? .orange : .red))
     }
 
     var body: some View {
@@ -125,16 +126,17 @@ private struct ProxyCard: View {
                 Text(store.snapshot?.proxies.proxies[name]?.type ?? "Proxy")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 if group.isAutomatic && group.fixed == name {
-                    Text("已固定").font(.system(size: 10)).foregroundStyle(ZFlyPalette.tint)
+                    Text("已固定").font(.system(size: 10)).foregroundStyle(accent.color)
                 }
             }
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 15)).foregroundStyle(selected ? ZFlyPalette.tint : Color.primary.opacity(0.15))
+                .font(.system(size: 15)).foregroundStyle(selected ? accent.color : Color.primary.opacity(0.15))
         }.frame(maxWidth: .infinity, minHeight: 36, alignment: .topLeading).contentShape(Rectangle())
     }
 }
 
 struct ConnectionsView: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     let active: Bool
     @State private var search = PreviewOptions.value("--preview-query") ?? ""
@@ -150,7 +152,7 @@ struct ConnectionsView: View {
         let lastID = visibleConnections.last?.id
         VStack(alignment: .leading, spacing: ZFlyMetrics.sectionSpacing) {
             PageHeader("连接") {
-                StatusBadge(title: "\(all.count) 条活动连接", color: ZFlyPalette.tint)
+                StatusBadge(title: "\(all.count) 条活动连接", color: accent.color)
             }
             SearchField(prompt: "搜索目标或进程", text: $search)
             VStack(spacing: 0) {
@@ -189,13 +191,14 @@ struct ConnectionsView: View {
 }
 
 private struct ConnectionRow: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     let connection: ConnectionInfo
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "arrow.up.arrow.down").font(.system(size: 12)).foregroundStyle(ZFlyPalette.tint)
-                .frame(width: 30, height: 30).background(ZFlyPalette.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            Image(systemName: "arrow.up.arrow.down").font(.system(size: 12)).foregroundStyle(accent.color)
+                .frame(width: 30, height: 30).background(accent.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 5) {
                 Text(connection.destination).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
                     .lineLimit(1).truncationMode(.middle)

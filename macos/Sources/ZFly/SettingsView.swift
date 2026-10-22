@@ -217,7 +217,9 @@ private struct CoreSettingsView: View {
 }
 
 private struct AppearanceSettingsView: View {
+    @Environment(\.zflyAccent) private var accent
     @AppStorage("appearance.scheme", store: PreviewOptions.preferences) private var scheme = "system"
+    @AppStorage("appearance.accent", store: PreviewOptions.preferences) private var accentPreference = AppAccent.system.rawValue
     @AppStorage("appearance.language", store: PreviewOptions.preferences) private var language = AppLanguage.system.rawValue
     @AppStorage("appearance.glass", store: PreviewOptions.preferences) private var glass = true
     @AppStorage("appearance.ambient", store: PreviewOptions.preferences) private var ambient = true
@@ -235,6 +237,13 @@ private struct AppearanceSettingsView: View {
                 }
                 ContentSection("外观") {
                     VStack(spacing: 0) {
+                        PreferenceRow("强调色") {
+                            Picker("强调色", selection: $accentPreference) {
+                                Text("跟随系统").tag(AppAccent.system.rawValue)
+                                Text("ZFly 青绿").tag(AppAccent.teal.rawValue)
+                            }.frame(width: ZFlyMetrics.fieldWidth)
+                        }
+                        Divider().opacity(0.5)
                         PreferenceRow("语言") {
                             Picker("语言", selection: $language) {
                                 Text("跟随系统").tag(AppLanguage.system.rawValue)
@@ -249,6 +258,7 @@ private struct AppearanceSettingsView: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
+                    Text("强调色同步用于主窗口与菜单栏面板。")
                     Text("减少背景干扰，让文字与图表更清晰。透明效果仅用于侧边栏。")
                     if reduceTransparency {
                         Label("系统已开启减少透明度，当前使用不透明外观。", systemImage: "accessibility")
@@ -262,15 +272,15 @@ private struct AppearanceSettingsView: View {
         Button { scheme = value } label: {
             VStack(spacing: 12) {
                 Image(systemName: icon).font(.system(size: 24, weight: .light))
-                    .foregroundStyle(scheme == value ? ZFlyPalette.tint : Color.secondary)
+                    .foregroundStyle(scheme == value ? accent.color : Color.secondary)
                 HStack(spacing: 6) {
                     Text(title).font(.system(size: 12, weight: .medium))
-                    if scheme == value { Image(systemName: "checkmark.circle.fill").foregroundStyle(ZFlyPalette.tint).font(.system(size: 11)) }
+                    if scheme == value { Image(systemName: "checkmark.circle.fill").foregroundStyle(accent.color).font(.system(size: 11)) }
                 }
             }
             .frame(maxWidth: .infinity).frame(height: 96)
-            .background((scheme == value ? ZFlyPalette.tint : Color.secondary).opacity(scheme == value ? 0.07 : 0.035), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(scheme == value ? ZFlyPalette.tint.opacity(0.5) : Color.primary.opacity(0.07)))
+            .background((scheme == value ? accent.color : Color.secondary).opacity(scheme == value ? 0.07 : 0.035), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(scheme == value ? accent.color.opacity(0.5) : Color.primary.opacity(0.07)))
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }.buttonStyle(.plain).accessibilityAddTraits(scheme == value ? .isSelected : [])
     }

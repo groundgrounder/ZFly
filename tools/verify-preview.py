@@ -49,7 +49,7 @@ def inspect_runtime(pid):
     return {"pid": pid, "sessionDirectory": str(session), "dataDirectories": sorted(directories), "listeners": listeners}
 
 
-def render(binary, directory, variant, page, label):
+def render(binary, directory, variant, page, label, *, menu=False, keyboard=False, preview_options=()):
     name = variant + "-" + page
     screenshot = directory / (name + ".png")
     # A previous image must never make a failed run look successful.
@@ -58,8 +58,12 @@ def render(binary, directory, variant, page, label):
     children, records = set(), {}
     started = time.monotonic()
     with (directory / (name + ".log")).open("wb") as log:
+        options = ["--preview-menu"] if menu else []
+        if keyboard:
+            options.append("--preview-menu-tab")
+        options.extend(preview_options)
         app = subprocess.Popen([str(binary), "--safe-mode", "--preview-state", variant,
-                                "--preview-page", label, "--render-preview", str(screenshot)],
+                                "--preview-page", label, "--render-preview", str(screenshot), *options],
                                stdout=log, stderr=log, env=environment)
         (directory / (name + ".pid")).write_text(str(app.pid) + "\n")
         print(name + ": app PID " + str(app.pid), flush=True)
@@ -83,7 +87,9 @@ def render(binary, directory, variant, page, label):
             if header[:8] != b"\x89PNG\r\n\x1a\n":
                 raise RuntimeError("Invalid preview PNG: " + name)
             width, height = struct.unpack(">II", header[16:24])
-            if width < 900 or height < 600:
+            if menu and not (330 <= width <= 1024 and 300 <= height <= 1800):
+                raise RuntimeError("Unexpected menu preview dimensions: " + name)
+            if not menu and (width < 900 or height < 600):
                 raise RuntimeError("Unexpected preview dimensions: " + name)
             if not records or not any(item["listeners"] for item in records.values()):
                 raise RuntimeError("Did not observe the preview management listener: " + name)
@@ -118,16 +124,46 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=ROOT / "build/macos/ZFly.app")
     parser.add_argument("--output", type=Path, default=ROOT / "build/macos/preview-backend-review")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--menu", action="store_true", help="Capture the actual status popover, including its system frame and Tab navigation")
+    mode.add_argument("--appearance", action="store_true", help="Review shared accent colors in both appearances and live preference changes")
     args = parser.parse_args()
     binary = args.app.resolve() / "Contents/MacOS/ZFly"
     directory = args.output.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     results = []
-    for variant in ("default", "empty", "stopped"):
-        for page, label in PAGES.items():
-            results.append(render(binary, directory, variant, page, label))
-            (directory / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
-    print("Verified 24 screenshots, owned process trees, management listeners and directory cleanup.")
+
+    def capture(variant, page, label, **options):
+        results.append(render(binary, directory, variant, page, label, **options))
+        (directory / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
+
+    if args.appearance:
+        surfaces = {"overview": "概览", "settings": "设置", "menu": "菜单栏"}
+        for scheme in ("light", "dark"):
+            for accent in ("system", "teal"):
+                for surface, label in surfaces.items():
+                    capture("stopped" if surface == "menu" else "default", f"{scheme}-{accent}-{surface}", label,
+                            menu=surface == "menu", preview_options=["--preview-accent", accent,
+                            "--preview-scheme", scheme, "--preview-settings", "外观"])
+        # Change the same preference used by the settings picker after the
+        # views are mounted, checking that each hosting root updates in place.
+        for before, after in (("system", "teal"), ("teal", "system")):
+            for surface in ("overview", "menu"):
+                capture("stopped", f"live-{before}-to-{after}-{surface}", surfaces[surface],
+                        menu=surface == "menu", preview_options=["--preview-accent", before,
+                        "--preview-accent-after", after, "--preview-scheme", "light"])
+        for before, after in (("light", "dark"), ("dark", "light")):
+            capture("stopped", f"live-{before}-to-{after}-menu", surfaces["menu"], menu=True,
+                    preview_options=["--preview-accent", "teal", "--preview-scheme", before,
+                                     "--preview-scheme-after", after])
+        capture("default", "english-settings", "设置", preview_options=["--preview-language", "en",
+                "--preview-settings", "外观", "--preview-scheme", "light", "--preview-size", "900x640"])
+    else:
+        pages = {"menu": "菜单栏", "menu-tab": "菜单栏键盘"} if args.menu else PAGES
+        for variant in ("default", "empty", "stopped"):
+            for page, label in pages.items():
+                capture(variant, page, label, menu=args.menu, keyboard=page == "menu-tab")
+    print(f"Verified {len(results)} screenshots, owned process trees, management listeners and directory cleanup.")
 
 
 if __name__ == "__main__":

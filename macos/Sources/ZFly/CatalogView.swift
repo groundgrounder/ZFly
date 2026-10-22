@@ -8,6 +8,7 @@ private struct CatalogSelection: Identifiable {
 }
 
 struct CatalogView: View {
+    @Environment(\.zflyAccent) private var accent
     @Environment(Store.self) private var store
     var active = true
     @State private var kind: CatalogKind = .proxies
@@ -54,8 +55,8 @@ struct CatalogView: View {
                         ForEach(items) { item in
                             HStack(spacing: 12) {
                                 Image(systemName: kind == .groups ? "square.stack.3d.up" : "network")
-                                    .foregroundStyle(ZFlyPalette.tint).frame(width: 36, height: 36)
-                                    .background(ZFlyPalette.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                                    .foregroundStyle(accent.color).frame(width: 36, height: 36)
+                                    .background(accent.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(item.label).font(.headline)
                                     Text(item.detail).font(.caption).foregroundStyle(.secondary)

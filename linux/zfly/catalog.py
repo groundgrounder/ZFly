@@ -1,7 +1,9 @@
 import json
 
+from .i18n import tr, trn
 from gi.repository import Adw, Gtk
 
+from .pages import Page
 from .catalog_model import CATALOG_KINDS
 from .ui import EmptyState, button, choice, clear, label, modal_window, primary_button, show_error
 
@@ -25,7 +27,7 @@ class CatalogPanel(Gtk.Box):
         heading.append(label("自定义资源", "title-1", hexpand=True))
         heading.append(primary_button(button("新建", lambda: self.open())))
         self.append(heading)
-        fields = Adw.PreferencesGroup(description="节点在自定义配置之间共享，代理组属于所选配置；规则和扩展方式在规则与高级中管理。")
+        fields = Adw.PreferencesGroup(description=tr("节点在自定义配置之间共享，代理组属于所选配置；规则和扩展方式在规则与高级中管理。"))
         self.kind = choice(fields, "分类", [CATALOG_KINDS[k] for k in self.kinds], CATALOG_KINDS["proxies"])
         self.profile = choice(fields, "自定义配置", ["选择配置"], "选择配置")
         self.profile.set_visible(False)
@@ -40,7 +42,7 @@ class CatalogPanel(Gtk.Box):
         self.empty = EmptyState("创建自己的节点", "添加节点后，可在自定义配置中引用它们。", "folder-symbolic", ("新建节点", self._empty_action))
         self.empty.set_vexpand(True)
         self.append(self.empty)
-        self.note = Gtk.Label(label="请连接本地运行时。", xalign=0, wrap=True)
+        self.note = Gtk.Label(label=tr("请连接本地运行时。"), xalign=0, wrap=True)
         self.append(self.note)
         self.kind.connect("notify::selected", self.select)
         self.profile.connect("notify::selected", self.select)
@@ -85,12 +87,12 @@ class CatalogPanel(Gtk.Box):
             selected = self.key()[1]
             self.profile_ids, self.profile_labels = identities, labels
             self.updating = True
-            self.profile.set_model(Gtk.StringList.new(labels or ["选择配置"]))
+            self.profile.set_model(Gtk.StringList.new(labels or [tr("选择配置")]))
             current = (self.window.management_state or {}).get("currentProfileID")
             selected = selected if selected in identities else current
             self.profile.set_selected(identities.index(selected) if selected in identities else 0)
             self.updating = False
-        if self.window.page == "自定义资源":
+        if self.window.page == Page.CATALOG:
             self.profile.set_visible(self.key()[0] == "groups")
             if self.key() != previous:
                 self.render()
@@ -123,15 +125,15 @@ class CatalogPanel(Gtk.Box):
         self.empty.set_visible(not items)
         self.empty.action.set_visible(self.available())
         if self.load_error:
-            self.empty.update("无法载入资源", self.load_error)
-            self.empty.action.set_label("重试")
+            self.empty.update(tr("无法载入资源"), tr(self.load_error))
+            self.empty.action.set_label(tr("重试"))
         elif not self.available():
-            self.empty.update("先准备一份自定义配置" if self.key()[0] == "groups" else "正在准备资源", "请在配置与订阅中创建自定义配置。" if self.key()[0] == "groups" else "等待 ZFly 本地运行时就绪。")
+            self.empty.update(tr("先准备一份自定义配置") if self.key()[0] == "groups" else tr("正在准备资源"), tr("请在配置与订阅中创建自定义配置。") if self.key()[0] == "groups" else tr("等待 ZFly 本地运行时就绪。"))
         else:
             groups = self.key()[0] == "groups"
-            self.empty.update("创建自己的代理组" if groups else "创建自己的节点", "将节点组织为代理组，按需选择连接方式。" if groups else "添加节点后，可在自定义配置中引用它们。")
-            self.empty.action.set_label("新建代理组" if groups else "新建节点")
-        self.note.set_label(self.load_error if self.load_error else f"{len(items)} 项资源" if items else "")
+            self.empty.update(tr("创建自己的代理组") if groups else tr("创建自己的节点"), tr("将节点组织为代理组，按需选择连接方式。") if groups else tr("添加节点后，可在自定义配置中引用它们。"))
+            self.empty.action.set_label(tr("新建代理组") if groups else tr("新建节点"))
+        self.note.set_label(tr(self.load_error) if self.load_error else trn("{count} 项资源", "{count} 项资源", len(items)) if items else "")
         if self.load_error:
             self.note.add_css_class("error")
         else:
@@ -144,7 +146,7 @@ class CatalogPanel(Gtk.Box):
             self.open()
 
     def load(self):
-        if self.window.page != "自定义资源" or not self.available() or self.loading:
+        if self.window.page != Page.CATALOG or not self.available() or self.loading:
             return
         if self.window.busy:
             self.pending = True
@@ -165,7 +167,7 @@ class CatalogPanel(Gtk.Box):
 
     def open(self, identity=None):
         if not self.available():
-            self.window.toast("请先连接本地运行时，并选择自定义配置。")
+            self.window.toast(tr("请先连接本地运行时，并选择自定义配置。"))
             return
         command = self.command("catalog.read", identity)
         self.window.manage(command, lambda result: self.editor(command, result["document"]))
@@ -188,10 +190,10 @@ class CatalogPanel(Gtk.Box):
                 try:
                     value = json.loads(text)
                     if not isinstance(value, dict):
-                        show_error(dialog, "资源需要一个 JSON 对象。")
+                        show_error(dialog, tr("资源需要一个 JSON 对象。"))
                         return
                 except json.JSONDecodeError as error:
-                    show_error(dialog, f"JSON 第 {error.lineno} 行、第 {error.colno} 列：{error.msg}")
+                    show_error(dialog, tr("JSON 第 {line} 行、第 {column} 列：{message}", line=error.lineno, column=error.colno, message=error.msg))
                     return
             request = {**command, "action": action, "text": text, "revision": document["revision"]}
             def saved(_result):
@@ -208,11 +210,11 @@ class CatalogPanel(Gtk.Box):
                 buffer.set_text(json.dumps(json.loads(text), ensure_ascii=False, indent=2))
                 show_error(dialog, "")
             except json.JSONDecodeError as error:
-                show_error(dialog, f"JSON 第 {error.lineno} 行、第 {error.colno} 列：{error.msg}")
+                show_error(dialog, tr("JSON 第 {line} 行、第 {column} 列：{message}", line=error.lineno, column=error.colno, message=error.msg))
         def confirm(heading, callback):
-            alert = Adw.MessageDialog(transient_for=dialog, modal=True, heading=heading)
-            alert.add_response("cancel", "取消")
-            alert.add_response("continue", "继续")
+            alert = Adw.MessageDialog(transient_for=dialog, modal=True, heading=tr(heading))
+            alert.add_response("cancel", tr("取消"))
+            alert.add_response("continue", tr("继续"))
             alert.set_response_appearance("continue", Adw.ResponseAppearance.DESTRUCTIVE)
             alert.set_close_response("cancel")
             alert.connect("response", lambda _alert, response: callback() if response == "continue" else None)

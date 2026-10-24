@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the editable SVG into the Linux and macOS application icons."""
+"""Render the editable SVGs into Linux/macOS application icons and Linux tray icons."""
 
 from pathlib import Path
 import ctypes as c
@@ -13,6 +13,10 @@ import os
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = (16, 32, 48, 64, 128, 256, 512, 1024)
+TRAY_ICONS = {
+    "zfly-tray-stopped-symbolic": "tray-outline.svg",
+    "zfly-tray-running-symbolic": "tray-filled.svg",
+}
 ICNS = ((b"icp4", 16), (b"icp5", 32), (b"icp6", 64), (b"ic07", 128),
         (b"ic08", 256), (b"ic09", 512), (b"ic10", 1024),
         (b"ic11", 32), (b"ic12", 64), (b"ic13", 256), (b"ic14", 512))
@@ -88,6 +92,18 @@ def main():
                     f"--export-height={size}",
                 ], check=True, stdout=subprocess.DEVNULL)
             rendered[size] = destination.read_bytes()
+        tray_rendered = {}
+        for name, source in TRAY_ICONS.items():
+            destination = temporary / f"{name}.png"
+            if render:
+                render(ROOT / "assets" / source, destination, 32)
+            else:
+                subprocess.run([
+                    inkscape, str(ROOT / "assets" / source), "--export-type=png",
+                    f"--export-filename={destination}", "--export-width=32",
+                    "--export-height=32",
+                ], check=True, stdout=subprocess.DEVNULL)
+            tray_rendered[name] = destination.read_bytes()
         chunks = []
         for kind, size in ICNS:
             data = rendered[size]
@@ -95,8 +111,10 @@ def main():
         payload = b"".join(chunks)
         for size, data in rendered.items():
             (output / f"zfly-{size}.png").write_bytes(data)
+        for name, data in tray_rendered.items():
+            (output / f"{name}.png").write_bytes(data)
         (output / "ZFly.icns").write_bytes(b"icns" + struct.pack(">I", len(payload) + 8) + payload)
-    print(f"Rendered {len(SIZES)} PNG sizes and ZFly.icns into {output}")
+    print(f"Rendered {len(SIZES)} app PNG sizes, {len(TRAY_ICONS)} tray PNGs and ZFly.icns into {output}")
 
 
 if __name__ == "__main__":

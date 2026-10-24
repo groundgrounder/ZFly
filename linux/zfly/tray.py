@@ -4,7 +4,8 @@ import gi
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf, Gio, GLib
 
-from .icons import icon_file
+from .i18n import tr
+from .icons import tray_icon_file
 
 WATCHER = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
@@ -53,8 +54,8 @@ MENU_XML = """<node><interface name="com.canonical.dbusmenu">
 </interface></node>"""
 
 
-def icon_pixmaps():
-    path = icon_file(48)
+def icon_pixmaps(running):
+    path = tray_icon_file(running)
     if path is not None:
         try:
             image = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 32, 32, True)
@@ -86,13 +87,12 @@ class StatusNotifierTray:
         self.registered = False
         self.host_registered = False
         self.revision = 1
-        self.description = "正在启动 ZFly…"
+        self.description = tr("正在启动 ZFly…")
         self.entries = {}
-        # External panels may have cached theme lookups before ZFly was installed.
-        # QIcon-based hosts accept an absolute file name; keep pixmaps as well.
-        path = icon_file()
-        self.icon_name = str(path) if path else ""
-        self.pixmaps = icon_pixmaps()
+        self.icon_name = ""
+        self.icon_theme_path = ""
+        self.pixmaps = []
+        self.icon_state = None
         self.objects = []
         self.signals = []
         self.watch = 0
@@ -174,7 +174,7 @@ class StatusNotifierTray:
             return {"Version": GLib.Variant("u", 3), "TextDirection": GLib.Variant("s", "ltr"),
                     "Status": GLib.Variant("s", "normal"), "IconThemePath": GLib.Variant("as", [])}.get(name)
         strings = {"Category": "ApplicationStatus", "Id": "zfly", "Title": "ZFly", "Status": "Active",
-                   "IconName": self.icon_name, "IconThemePath": "", "OverlayIconName": "",
+                   "IconName": self.icon_name, "IconThemePath": self.icon_theme_path, "OverlayIconName": "",
                    "AttentionIconName": "", "AttentionMovieName": ""}
         if name in strings:
             return GLib.Variant("s", strings[name])
@@ -256,23 +256,30 @@ class StatusNotifierTray:
         window = self.application.window
         state = window.management_state if window else None
         running = bool(state and state["running"])
+        if self.icon_state != running:
+            path = tray_icon_file(running)
+            self.icon_name = f"zfly-tray-{'running' if running else 'stopped'}-symbolic"
+            self.icon_theme_path = str(path.parent) if path else ""
+            self.pixmaps = icon_pixmaps(running)
+            self.icon_state = running
+            self.connection.emit_signal(None, self.path, ITEM, "NewIcon", None)
         if window and window.closed:
-            description = "正在还原系统代理并退出…"
+            description = tr("正在还原系统代理并退出…")
         elif not state:
-            description = "正在启动 ZFly…"
+            description = tr("正在启动 ZFly…")
         elif running and window and not window.connected:
-            description = "核心连接中断"
+            description = tr("核心连接中断")
         else:
-            description = "代理运行中" if running else "代理已停止"
+            description = tr("代理运行中") if running else tr("代理已停止")
         if self.application.preview:
-            description = "离线预览 · " + description
+            description = tr("离线预览 · {description}", description=description)
         entries = {0: {"children-display": "submenu"},
                    1: {"label": description, "enabled": False},
-                   2: {"label": "打开 ZFly", "enabled": True},
-                   3: {"label": "停止代理" if running else "启动代理",
+                   2: {"label": tr("打开 ZFly"), "enabled": True},
+                   3: {"label": tr("停止代理") if running else tr("启动代理"),
                        "enabled": bool(state and state["currentProfileID"] and window and not window.busy and not window.closed)},
                    4: {"type": "separator"},
-                   5: {"label": "退出 ZFly", "enabled": not bool(window and window.closed)}}
+                   5: {"label": tr("退出 ZFly"), "enabled": not bool(window and window.closed)}}
         if entries != self.entries:
             self.entries = entries
             self.revision += 1

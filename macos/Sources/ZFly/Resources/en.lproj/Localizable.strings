@@ -165,7 +165,6 @@
 "继续恢复" = "Continue restore";
 "打开 ZFly" = "Open ZFly";
 "退出 ZFly" = "Quit ZFly";
-"ZFly · 演示模式" = "ZFly · Preview mode";
 "ZFly 内置核心" = "ZFly built-in core";
 "ZFly 仍在恢复系统代理" = "ZFly is still restoring the system proxy";
 "ZFly 内置运行时退出，未能启动核心。" = "ZFly's built-in runtime exited before the core could start.";

@@ -9,6 +9,7 @@ import time
 import threading
 
 from .controller import ControllerError
+from .i18n import tr
 
 
 class NativeRuntime:
@@ -27,7 +28,7 @@ class NativeRuntime:
         if self.process is not None and self.process.poll() is not None:
             self.stop()
         if self.process is not None:
-            raise ControllerError("ZFly 运行时已启动。")
+            raise ControllerError(tr("ZFly 运行时已启动。"))
         self.directory = tempfile.TemporaryDirectory(prefix="zfly-session-")
         ready = Path(self.directory.name) / "ready.json"
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONNOUSERSITE="1")
@@ -44,19 +45,19 @@ class NativeRuntime:
                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for _ in range(900):
                 if self._stop_requested.is_set():
-                    raise ControllerError("ZFly 启动已取消。")
+                    raise ControllerError(tr("ZFly 启动已取消。"))
                 if ready.is_file():
                     result = json.loads(ready.read_text())
                     ready.unlink()
                     if result.get("error"):
                         raise ControllerError(result["error"])
                     if not all(isinstance(result.get(key), str) and result[key] for key in ("endpoint", "secret", "dataDirectory")):
-                        raise ControllerError("ZFly 运行时返回无效的启动信息。")
+                        raise ControllerError(tr("ZFly 运行时返回无效的启动信息。"))
                     return result
                 if self.process.poll() is not None:
-                    raise ControllerError("ZFly 运行时退出，请检查包内核心与 Python 运行时。")
+                    raise ControllerError(tr("ZFly 运行时退出，请检查包内核心与 Python 运行时。"))
                 time.sleep(0.1)
-            raise ControllerError("ZFly 核心启动超时。")
+            raise ControllerError(tr("ZFly 核心启动超时。"))
         except Exception:
             self.stop()
             raise

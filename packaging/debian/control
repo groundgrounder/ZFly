@@ -1,0 +1,12 @@
+Package: zfly
+Version: 0.2.0-1
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: ZFly contributors <zfly@users.noreply.github.com>
+Depends: python3 (>= 3.11), python3-gi, gir1.2-glib-2.0, gir1.2-gtk-4.0, gir1.2-adw-1 (>= 1.4), gir1.2-gdkpixbuf-2.0, libglib2.0-bin, gsettings-desktop-schemas, adwaita-icon-theme, librsvg2-common, fonts-noto-cjk, ca-certificates
+Recommends: gtk-update-icon-cache
+Description: standalone GTK proxy and subscription manager
+ ZFly manages profiles, subscriptions, proxy cores, persistent settings, and
+ system proxy settings. It includes a private mihomo core and a native GTK 4
+ and libadwaita interface.

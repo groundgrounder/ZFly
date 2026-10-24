@@ -1,6 +1,7 @@
 """Shared, theme-aware GTK layouts and dialog conventions."""
 
 from gi.repository import Adw, Gdk, Gtk
+from .i18n import source_text, tr
 
 
 STYLES = """
@@ -24,23 +25,23 @@ STYLES = """
 
 
 def button(label, callback, icon=None):
-    item = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+    item = Gtk.Button(label=tr(label), valign=Gtk.Align.CENTER)
     if icon:
         item.set_icon_name(icon)
-    item.set_tooltip_text(label)
+    item.set_tooltip_text(tr(label))
     item.connect("clicked", lambda _button: callback())
     return item
 
 
 def entry(group, title, text="", password=False):
-    row = (Adw.PasswordEntryRow if password else Adw.EntryRow)(title=title, text=str(text))
+    row = (Adw.PasswordEntryRow if password else Adw.EntryRow)(title=tr(title), text=str(text))
     row.connect("changed", lambda item: item.remove_css_class("error"))
     group.add(row)
     return row
 
 
 def switch(group, title, active=False):
-    row = Adw.SwitchRow(title=title, active=active)
+    row = Adw.SwitchRow(title=tr(title), active=active)
     group.add(row)
     return row
 
@@ -50,7 +51,7 @@ def choice(group, title, values, current):
     values = list(values)
     if current not in values:
         values.append(current)
-    row = Adw.ComboRow(title=title, model=Gtk.StringList.new([names.get(value, value) for value in values]))
+    row = Adw.ComboRow(title=tr(title), model=Gtk.StringList.new([tr(names.get(value, value)) for value in values]))
     if current in values:
         row.set_selected(values.index(current))
     row.values = values
@@ -70,6 +71,29 @@ def clear(box):
         child = following
 
 
+def retranslate(root):
+    def walk(widget):
+        child = widget.get_first_child()
+        while child:
+            yield child
+            yield from walk(child)
+            child = child.get_next_sibling()
+
+    for widget in walk(root):
+        properties = {item.name for item in widget.list_properties()}
+        for name in ("label", "title", "subtitle", "description", "placeholder-text", "tooltip-text", "heading", "body"):
+            if name not in properties:
+                continue
+            value = widget.get_property(name)
+            if value:
+                widget.set_property(name, tr(source_text(value)))
+        if isinstance(widget, (Adw.ComboRow, Gtk.DropDown)):
+            model = widget.get_model()
+            if isinstance(model, Gtk.StringList):
+                for index in range(model.get_n_items()):
+                    model.splice(index, 1, [tr(source_text(model.get_string(index)))])
+
+
 _styled_displays = set()
 
 
@@ -86,7 +110,7 @@ def install_styles():
 
 
 def label(text="", style=None, **kwargs):
-    item = Gtk.Label(label=text, xalign=0, wrap=True, **kwargs)
+    item = Gtk.Label(label=tr(text), xalign=0, wrap=True, **kwargs)
     if style:
         item.add_css_class(style)
     return item
@@ -137,25 +161,25 @@ class EmptyState(Gtk.Box):
         self.description.set_xalign(.5)
         self.append(self.description)
         if action:
-            self.action = Gtk.Button(label=action[0], halign=Gtk.Align.CENTER)
+            self.action = Gtk.Button(label=tr(action[0]), halign=Gtk.Align.CENTER)
             self.action.connect("clicked", lambda _button: action[1]())
             self.append(self.action)
 
     def update(self, title, description):
-        self.title.set_label(title)
-        self.description.set_label(description)
+        self.title.set_label(tr(title))
+        self.description.set_label(tr(description))
 
 
 def modal_window(parent, title, width=560, height=520, scroll=True):
     dialog = Adw.Window(
-        title=title, transient_for=parent, modal=True,
+        title=tr(title), transient_for=parent, modal=True,
         default_width=max(300, min(width, parent.get_width() - 32)),
         default_height=max(320, min(height, parent.get_height() - 64)),
     )
     content = page_box(16)
     toolbar = Adw.ToolbarView()
-    header = Adw.HeaderBar(title_widget=Adw.WindowTitle(title=title), show_end_title_buttons=False)
-    cancel = Gtk.Button(label="取消")
+    header = Adw.HeaderBar(title_widget=Adw.WindowTitle(title=tr(title)), show_end_title_buttons=False)
+    cancel = Gtk.Button(label=tr("取消"))
     cancel.connect("clicked", lambda _button: dialog.close())
     header.pack_start(cancel)
     toolbar.add_top_bar(header)
@@ -176,7 +200,7 @@ def modal_window(parent, title, width=560, height=520, scroll=True):
 
 
 def show_error(dialog, message, field=None):
-    dialog.error_label.set_label(message)
+    dialog.error_label.set_label(tr(message))
     dialog.error_label.set_visible(bool(message))
     if field is not None:
         field.add_css_class("error")

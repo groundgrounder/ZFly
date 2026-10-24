@@ -3,6 +3,7 @@ from .proxy_model import group_names
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
 
 import gi
 
@@ -10,8 +11,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk
 
+from .i18n import set_language, tr, trn
+from .startup import StartupPreferences
 from .controller import Controller, ControllerError, PreviewController
 from .management import ManagementClient, PreviewManagement
+from .pages import Page, PAGE_ICONS, PAGE_LABELS
 from .settings import SettingsPanel
 from .profiles import ProfilesPanel
 from .workspace import WorkspacePanel
@@ -19,8 +23,7 @@ from .tools import ToolsPanel
 from .catalog import CatalogPanel
 from .native_runtime import NativeRuntime
 from .tray import StatusNotifierTray
-from .icons import icon_file
-from .ui import EmptyState, button as action_button, clear, install_styles, label, page, page_box
+from .ui import EmptyState, button as action_button, clear, install_styles, label, page, page_box, retranslate as retranslate_widget
 
 
 def size(value):
@@ -33,18 +36,20 @@ def size(value):
 
 def destination(connection):
     meta = connection.get("metadata") or {}
-    host = meta.get("host") or meta.get("destinationIP") or "未知目标"
+    host = meta.get("host") or meta.get("destinationIP") or tr("未知目标")
     port = meta.get("destinationPort")
     return f"{host}:{port}" if port else host
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, preview):
+        self.startup_preferences = StartupPreferences()
+        set_language(self.startup_preferences.language())
         super().__init__(application=app, title="ZFly", default_width=1040, default_height=720)
         self.preview = preview
         self.controller = PreviewController() if preview else None
         self.management_client = PreviewManagement(self.controller) if preview else None
         self.management_state = self.management_client.snapshot() if preview else None
-        self.management_status = "演示模式 · 操作不会修改系统" if preview else "正在启动 ZFly 本地运行时…"
+        self._set_management_status("演示模式 · 操作不会修改系统" if preview else "正在启动 ZFly 本地运行时…")
         self.management_endpoint = ""
         self.runtime = None if preview else NativeRuntime()
         self.shutdown_complete = False
@@ -64,7 +69,7 @@ class Window(Adw.ApplicationWindow):
         self.closed = False
         self.connected = preview
         self.generation = 0
-        self.page = "概览"
+        self.page = Page.OVERVIEW
         self.last_proxies = None
         self.last_connections = None
         self.updating_modes = False
@@ -76,31 +81,33 @@ class Window(Adw.ApplicationWindow):
         else:
             self.start_runtime()
 
+
+    def _set_management_status(self, text, **values):
+        self.management_status = text.format(**values)
+        self.management_status_key = text
+        self.management_status_values = values
+
+    def display_management_status(self):
+        return tr(self.management_status_key, **self.management_status_values)
+
     def _build(self):
         install_styles()
         self.status = label("离线预览" if self.preview else "正在准备…", "caption")
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_toolbar = Adw.ToolbarView(content=sidebar)
-        brand = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
-        brand_icon = icon_file()
-        if brand_icon:
-            brand_image = Gtk.Image.new_from_file(str(brand_icon))
-            brand_image.set_pixel_size(32)
-        else:
-            brand_image = Gtk.Image(icon_name="io.github.zfly.ZFly", pixel_size=32)
-        brand.append(brand_image)
-        brand.append(Adw.WindowTitle(title="ZFly", subtitle="连接，自由掌握"))
-        sidebar_toolbar.add_top_bar(Adw.HeaderBar(title_widget=brand))
+        sidebar_toolbar.add_top_bar(Adw.HeaderBar(title_widget=Adw.WindowTitle(title="ZFly")))
         self.navigation = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, vexpand=True)
+        self.navigation_rows = {}
         self.navigation.add_css_class("navigation-sidebar")
-        for name, icon in (("概览", "view-grid-symbolic"), ("配置与订阅", "document-new-symbolic"), ("代理组", "network-workgroup-symbolic"), ("连接", "network-transmit-receive-symbolic"), ("自定义资源", "folder-symbolic"), ("规则与高级", "text-x-generic-symbolic"), ("网络工具", "applications-engineering-symbolic"), ("设置", "preferences-system-symbolic")):
+        for page_id in Page:
             row = Gtk.ListBoxRow()
-            row.page = name
+            row.page = page_id
             content = Gtk.Box(spacing=12, margin_top=11, margin_bottom=11, margin_start=12, margin_end=12)
-            content.append(Gtk.Image(icon_name=icon))
-            content.append(label(name))
+            content.append(Gtk.Image(icon_name=PAGE_ICONS[page_id]))
+            content.append(label(tr(PAGE_LABELS[page_id])))
             row.set_child(content)
             self.navigation.append(row)
+            self.navigation_rows[page_id] = row
         sidebar.append(Gtk.ScrolledWindow(child=self.navigation, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True))
         footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_start=16, margin_end=16, margin_top=12, margin_bottom=16)
         activity_row = Gtk.Box(spacing=8)
@@ -114,11 +121,11 @@ class Window(Adw.ApplicationWindow):
         sidebar.append(footer)
 
         self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=160)
-        self.content_title = Adw.WindowTitle(title="概览")
+        self.content_title = Adw.WindowTitle(title=tr(PAGE_LABELS[Page.OVERVIEW]))
         self.refresh_button = action_button("刷新", self.refresh, "view-refresh-symbolic")
         header = Adw.HeaderBar(title_widget=self.content_title)
         header.pack_end(self.refresh_button)
-        self.search = Gtk.SearchEntry(placeholder_text="搜索节点", margin_start=24, margin_end=24, margin_top=12, margin_bottom=12)
+        self.search = Gtk.SearchEntry(placeholder_text=tr("搜索节点"), margin_start=24, margin_end=24, margin_top=12, margin_bottom=12)
         self.search.connect("search-changed", lambda _entry: self._render_lists(force=True))
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         content.append(self.search)
@@ -127,35 +134,46 @@ class Window(Adw.ApplicationWindow):
         self._build_lists()
 
         self.settings_panel = SettingsPanel(self)
-        self.stack.add_named(self.settings_panel, "设置")
+        self.stack.add_named(self.settings_panel, Page.SETTINGS.value)
         self.profiles_panel = ProfilesPanel(self)
-        self.stack.add_named(self.profiles_panel, "配置与订阅")
+        self.stack.add_named(self.profiles_panel, Page.PROFILES.value)
         self.workspace_panel = WorkspacePanel(self)
         self.catalog_panel = CatalogPanel(self)
         self.tools_panel = ToolsPanel(self)
-        self.stack.add_named(page(self.workspace_panel, scroll=False), "规则与高级")
-        self.stack.add_named(page(self.catalog_panel, scroll=False), "自定义资源")
-        self.stack.add_named(page(self.tools_panel), "网络工具")
+        self.stack.add_named(page(self.workspace_panel, scroll=False), Page.WORKSPACE.value)
+        self.stack.add_named(page(self.catalog_panel, scroll=False), Page.CATALOG.value)
+        self.stack.add_named(page(self.tools_panel), Page.TOOLS.value)
 
         toolbar = Adw.ToolbarView(content=content)
         toolbar.add_top_bar(header)
         self.toasts = Adw.ToastOverlay(child=toolbar)
-        self.content_page = Adw.NavigationPage(title="概览", child=self.toasts)
+        self.content_page = Adw.NavigationPage(title=tr(PAGE_LABELS[Page.OVERVIEW]), child=self.toasts)
         self.split = Adw.NavigationSplitView(
             sidebar=Adw.NavigationPage(title="ZFly", child=sidebar_toolbar),
-            content=self.content_page, min_sidebar_width=220, max_sidebar_width=260,
+            content=self.content_page, collapsed=True, min_sidebar_width=220, max_sidebar_width=260,
         )
         self.set_content(self.split)
-        breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 700sp"))
-        breakpoint.add_setter(self.split, "collapsed", True)
+        breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("min-width: 701sp"))
+        breakpoint.add_setter(self.split, "collapsed", False)
         self.add_breakpoint(breakpoint)
         compact = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 500sp"))
-        compact.add_setter(self.split, "collapsed", True)
         compact.add_setter(self.hero_header, "orientation", Gtk.Orientation.VERTICAL)
         compact.add_setter(self.power_button, "halign", Gtk.Align.START)
         self.add_breakpoint(compact)
         self.navigation.connect("row-selected", self._navigate)
-        self.navigation.select_row(self.navigation.get_row_at_index(0))
+        self.navigation.connect("row-activated", lambda *_args: self.split.set_show_content(True))
+        self.navigation.select_row(self.navigation_rows[Page.OVERVIEW])
+
+    def retranslate(self):
+        retranslate_widget(self)
+        if self.data:
+            self.receive_snapshot(self.data)
+        self.workspace_panel.receive()
+        self.catalog_panel.receive()
+        self.catalog_panel.render()
+        self._render_lists(force=True)
+        self._sensitivity()
+        self.get_application().update_tray()
 
     def _build_overview(self):
         self.overview = page_box()
@@ -192,7 +210,7 @@ class Window(Adw.ApplicationWindow):
         self.mode_buttons = {}
         previous = None
         for mode, title in (("rule", "规则"), ("global", "全局"), ("direct", "直连")):
-            item = Gtk.ToggleButton(label=title)
+            item = Gtk.ToggleButton(label=tr(title))
             item.add_css_class("flat")
             if previous:
                 item.set_group(previous)
@@ -205,13 +223,13 @@ class Window(Adw.ApplicationWindow):
 
         context = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         context.add_css_class("boxed-list")
-        self.profile_row = Adw.ActionRow(title="当前配置", subtitle="尚未选择配置")
+        self.profile_row = Adw.ActionRow(title=tr("当前配置"), subtitle=tr("尚未选择配置"))
         self.profile_row.add_prefix(Gtk.Image(icon_name="document-new-symbolic"))
-        self.profile_row.add_suffix(action_button("管理", lambda: self.navigate_to(1)))
-        self.route_row = Adw.ActionRow(title="节点选择", subtitle="启动代理后查看节点")
+        self.profile_row.add_suffix(action_button("管理", lambda: self.navigate_to(Page.PROFILES)))
+        self.route_row = Adw.ActionRow(title=tr("节点选择"), subtitle=tr("启动代理后查看节点"))
         self.route_row.add_prefix(Gtk.Image(icon_name="network-workgroup-symbolic"))
-        self.route_row.add_suffix(action_button("查看", lambda: self.navigate_to(2)))
-        self.system_proxy_row = Adw.ActionRow(title="系统代理", subtitle="尚未开启")
+        self.route_row.add_suffix(action_button("查看", lambda: self.navigate_to(Page.PROXIES)))
+        self.system_proxy_row = Adw.ActionRow(title=tr("系统代理"), subtitle=tr("尚未开启"))
         self.system_proxy_row.add_prefix(Gtk.Image(icon_name="preferences-system-symbolic"))
         self.system_proxy_row.add_suffix(action_button("设置", self.open_network_settings))
         for row in (self.profile_row, self.route_row, self.system_proxy_row):
@@ -243,16 +261,16 @@ class Window(Adw.ApplicationWindow):
         self.overview.append(traffic)
         details = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         details.add_css_class("boxed-list")
-        expander = Adw.ExpanderRow(title="运行详情", subtitle="端口、核心版本与最近更新时间")
+        expander = Adw.ExpanderRow(title=tr("运行详情"), subtitle=tr("端口、核心版本与最近更新时间"))
         for name in ("路由模式", "代理端口", "核心版本", "最近更新"):
-            row = Adw.ActionRow(title=name)
+            row = Adw.ActionRow(title=tr(name))
             value = label("—", selectable=True)
             row.add_suffix(value)
             self.metric_rows[name] = value
             expander.add_row(row)
         details.append(expander)
         self.overview.append(details)
-        self.stack.add_named(page(self.overview), "概览")
+        self.stack.add_named(page(self.overview), Page.OVERVIEW.value)
 
     def _build_lists(self):
         proxies = page_box(16)
@@ -264,7 +282,7 @@ class Window(Adw.ApplicationWindow):
         self.unfix_button.set_visible(False)
         top.append(self.unfix_button)
         proxies.append(top)
-        self.group_picker = Adw.ComboRow(title="当前代理组")
+        self.group_picker = Adw.ComboRow(title=tr("当前代理组"))
         picker_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         picker_box.add_css_class("boxed-list")
         picker_box.append(self.group_picker)
@@ -274,12 +292,12 @@ class Window(Adw.ApplicationWindow):
         self.proxy_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.proxy_list.add_css_class("boxed-list")
         proxies.append(self.proxy_list)
-        self.proxy_empty = EmptyState("还没有代理节点", "添加配置后，代理节点会显示在这里。", "network-workgroup-symbolic", ("添加配置", lambda: self.navigate_to(1)))
+        self.proxy_empty = EmptyState("还没有代理节点", "添加配置后，代理节点会显示在这里。", "network-workgroup-symbolic", ("添加配置", lambda: self.navigate_to(Page.PROFILES)))
         self.proxy_no_results = EmptyState("没有匹配的节点", "试试其他名称，或清除搜索条件。", "edit-find-symbolic", ("清除搜索", lambda: self.search.set_text("")))
         proxies.append(self.proxy_empty)
         proxies.append(self.proxy_no_results)
         self.group_picker.connect("notify::selected", lambda *_args: self._render_proxies())
-        self.stack.add_named(page(proxies), "代理组")
+        self.stack.add_named(page(proxies), Page.PROXIES.value)
 
         connections = page_box(16)
         connections.append(label("活动连接", "title-1"))
@@ -292,32 +310,32 @@ class Window(Adw.ApplicationWindow):
         self.connection_no_results = EmptyState("没有匹配的连接", "可以搜索目标域名、地址或进程名。", "edit-find-symbolic", ("清除搜索", lambda: self.search.set_text("")))
         connections.append(self.connection_empty)
         connections.append(self.connection_no_results)
-        self.stack.add_named(page(connections), "连接")
+        self.stack.add_named(page(connections), Page.CONNECTIONS.value)
 
-    def navigate_to(self, index):
-        self.navigation.select_row(self.navigation.get_row_at_index(index))
+    def navigate_to(self, page_id):
+        self.navigation.select_row(self.navigation_rows[page_id])
         self.split.set_show_content(True)
 
     def open_network_settings(self):
-        self.navigate_to(7)
+        self.navigate_to(Page.SETTINGS)
         self.settings_panel.categories.set_selected(1)
 
     def _navigate(self, _list, row):
         if row:
             previous = self.page
             self.page = row.page
-            self.stack.set_visible_child_name(self.page)
-            self.content_title.set_title(self.page)
-            self.content_page.set_title(self.page)
+            self.stack.set_visible_child_name(self.page.value)
+            self.content_title.set_title(tr(PAGE_LABELS[self.page]))
+            self.content_page.set_title(tr(PAGE_LABELS[self.page]))
             self.split.set_show_content(True)
-            self.search.set_visible(self.page in ("代理组", "连接"))
-            self.search.set_placeholder_text("搜索节点名称" if self.page == "代理组" else "搜索域名、地址或进程")
+            self.search.set_visible(self.page in (Page.PROXIES, Page.CONNECTIONS))
+            self.search.set_placeholder_text(tr("搜索节点名称") if self.page == Page.PROXIES else tr("搜索域名、地址或进程"))
             if previous != self.page:
                 self.search.set_text("")
             self._render_lists(force=True)
-            if self.page == "规则与高级":
+            if self.page == Page.WORKSPACE:
                 self.workspace_panel.receive(refresh=True)
-            if self.page == "自定义资源":
+            if self.page == Page.CATALOG:
                 self.catalog_panel.receive()
 
     def _mode_clicked(self, button, mode):
@@ -336,15 +354,15 @@ class Window(Adw.ApplicationWindow):
         profiles = state["profiles"] if state else []
         current = next((item for item in profiles if item["id"] == state["currentProfileID"]), None) if state else None
         if not ready:
-            title, description = "运行时尚未就绪", self.management_status
+            title, description = tr("运行时尚未就绪"), self.display_management_status()
         elif not current:
-            title, description = "从一份配置开始", "添加订阅或导入 YAML，即可启动代理。"
+            title, description = tr("从一份配置开始"), tr("添加订阅或导入 YAML，即可启动代理。")
         elif running and not self.connected:
-            title, description = "核心连接中断", "正在尝试重新连接，可在运行信息中查看状态。"
+            title, description = tr("核心连接中断"), tr("正在尝试重新连接，可在运行信息中查看状态。")
         elif running:
-            title, description = "代理运行中", "演示状态，不会连接核心或更改系统网络。" if self.preview else "按所选路由模式处理连接。"
+            title, description = tr("代理运行中"), tr("演示状态，不会连接核心或更改系统网络。") if self.preview else tr("按所选路由模式处理连接。")
         else:
-            title, description = "代理已停止", "配置已准备好，随时可以启动。"
+            title, description = tr("代理已停止"), tr("配置已准备好，随时可以启动。")
         self.running_title.set_label(title)
         self.running_description.set_label(description)
         self.status_icon.set_from_icon_name("network-wired-symbolic" if running else "network-offline-symbolic")
@@ -352,17 +370,17 @@ class Window(Adw.ApplicationWindow):
             self.status_icon.remove_css_class("stopped")
         else:
             self.status_icon.add_css_class("stopped")
-        self.profile_row.set_subtitle(current["label"] if current else "尚未选择配置")
+        self.profile_row.set_subtitle(current["label"] if current else tr("尚未选择配置"))
         self.system_proxy_row.set_subtitle(
-            "状态暂不可用" if not ready else
-            "演示：已开启" if self.preview and state and state["network"]["systemProxy"] and running else
-            "已开启 · 仅遵循系统代理的应用生效" if state and state["network"]["systemProxy"] and running else
-            "代理停止时不接管系统网络" if not running else "未开启 · 可在设置中启用")
+            tr("状态暂不可用") if not ready else
+            tr("演示：已开启") if self.preview and state and state["network"]["systemProxy"] and running else
+            tr("已开启 · 仅遵循系统代理的应用生效") if state and state["network"]["systemProxy"] and running else
+            tr("代理停止时不接管系统网络") if not running else tr("未开启 · 可在设置中启用"))
         proxies = self.data["proxies"]["proxies"] if self.data else {}
         selected = self.group_picker.get_selected_item()
         group_name = selected.get_string() if selected else None
         group = proxies.get(group_name, {})
-        self.route_row.set_subtitle("节点信息暂不可用" if not ready or not self.connected else f"{group_name} → {group['now']}" if running and group.get("now") else "启动代理后查看节点" if not running else "当前配置没有可选代理组")
+        self.route_row.set_subtitle(tr("节点信息暂不可用") if not ready or not self.connected else f"{group_name} → {group['now']}" if running and group.get("now") else tr("启动代理后查看节点") if not running else tr("当前配置没有可选代理组"))
         mode = state["network"]["mode"] if state else "rule"
         self.updating_modes = True
         self.mode_buttons[mode].set_active(True)
@@ -379,14 +397,14 @@ class Window(Adw.ApplicationWindow):
     def start_runtime(self):
         if self.preview or self.busy or self.closed:
             return
-        self.status.set_label("正在启动 ZFly 内置核心…")
+        self.status.set_label(tr("正在启动 ZFly 内置核心…"))
         def ready(connection):
             if connection is not None:
                 self.controller = Controller(connection["endpoint"], connection["secret"])
                 self.management_client = ManagementClient(connection["endpoint"], connection["secret"])
                 self.management_endpoint = connection["endpoint"]
                 self.data_directory = connection["dataDirectory"]
-            self.management_status = "ZFly 运行时已就绪"
+            self._set_management_status("ZFly 运行时已就绪")
             self.refresh()
         def start():
             if self.runtime.process is not None and self.runtime.process.poll() is None and self.management_client:
@@ -394,10 +412,10 @@ class Window(Adw.ApplicationWindow):
                 return None
             return self.runtime.start()
         def failed(message):
-            self.management_status = "启动失败：" + message
-            self.status.set_label(self.management_status)
+            self._set_management_status("启动失败：{message}", message=message)
+            self.status.set_label(self.display_management_status())
             self.toast(message)
-        self._submit(start, ready, on_error=failed)
+        self.submit(start, ready, on_error=failed)
 
     def _close(self, *_args):
         app = self.get_application()
@@ -421,7 +439,7 @@ class Window(Adw.ApplicationWindow):
         self.generation += 1
         GLib.source_remove(self.timer)
         self.set_sensitive(False)
-        self.status.set_label("正在还原系统代理并退出…")
+        self.status.set_label(tr("正在还原系统代理并退出…"))
         app.update_tray()
         def work():
             try:
@@ -444,7 +462,7 @@ class Window(Adw.ApplicationWindow):
                 else:
                     self.present()
                 self._sensitivity()
-                self.toast("运行时仍在清理，请稍后再次退出。")
+                self.toast(tr("运行时仍在清理，请稍后再次退出。"))
             return GLib.SOURCE_REMOVE
         threading.Thread(target=work, daemon=True, name="zfly-shutdown").start()
         return True
@@ -469,7 +487,7 @@ class Window(Adw.ApplicationWindow):
         else:
             self.activity.stop()
         self.power_button.set_sensitive(not self.busy and bool(self.management_state and self.management_state["currentProfileID"]))
-        self.power_button.set_label("停止代理" if self.management_state and self.management_state["running"] else "启动代理")
+        self.power_button.set_label(tr("停止代理") if self.management_state and self.management_state["running"] else tr("启动代理"))
         self.refresh_button.set_sensitive(not self.busy and self.controller is not None)
         self.settings_button.set_sensitive(not self.busy)
         self.measure_button.set_sensitive(not self.busy and self.connected and self.group_picker.get_selected_item() is not None)
@@ -483,7 +501,7 @@ class Window(Adw.ApplicationWindow):
         self._update_overview()
         self.get_application().update_tray()
 
-    def _submit(self, operation, receive, action=False, done=None, background=False, on_error=None):
+    def submit(self, operation, receive, action=False, done=None, background=False, on_error=None):
         if self.busy or self.closed or (background and self.refreshing):
             return False
         if background:
@@ -515,12 +533,12 @@ class Window(Adw.ApplicationWindow):
                             self.toast(str(error))
                         else:
                             self.connected = False
-                            self.status.set_label("连接失败：" + str(error))
+                            self.status.set_label(tr("连接失败：{message}", message=tr(str(error))))
                     else:
                         try:
                             receive(value)
                         except Exception:
-                            (on_error or self.toast)("返回的数据格式无效，请刷新后重试。")
+                            (on_error or self.toast)(tr("返回的数据格式无效，请刷新后重试。"))
             finally:
                 if not self.closed:
                     self._sensitivity()
@@ -538,7 +556,7 @@ class Window(Adw.ApplicationWindow):
                 import traceback
                 frames = traceback.extract_tb(error.__traceback__)
                 logging.getLogger("zfly").error("%s at %s", type(error).__name__, "; ".join(f"{Path(f.filename).name}:{f.lineno}:{f.name}" for f in frames))
-                message = str(error) if isinstance(error, ControllerError) else "无法读取或保存文件，请检查磁盘空间和权限。" if isinstance(error, OSError) else "操作失败，请重试；详细位置已记录到日志。"
+                message = str(error) if isinstance(error, ControllerError) else tr("无法读取或保存文件，请检查磁盘空间和权限。") if isinstance(error, OSError) else tr("操作失败，请重试；详细位置已记录到日志。")
                 GLib.idle_add(finish, None, ControllerError(message))
             else:
                 GLib.idle_add(finish, value, None)
@@ -547,7 +565,7 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def toast(self, message):
-        self.toasts.add_toast(Adw.Toast(title=message))
+        self.toasts.add_toast(Adw.Toast(title=tr(message)))
 
     def refresh(self):
         if not self.controller:
@@ -564,29 +582,29 @@ class Window(Adw.ApplicationWindow):
                 data, core_error = None, str(error)
             try:
                 state = management.snapshot() if management else None
-                status = "演示模式 · 操作不会修改系统" if self.preview else "ZFly 运行时已就绪"
+                status = ("演示模式 · 操作不会修改系统" if self.preview else "ZFly 运行时已就绪"), {}
             except ControllerError as error:
-                state, status = None, "状态可能过期，请重试：" + str(error)
+                state, status = None, ("状态可能过期，请重试：{message}", {"message": str(error)})
             return data, core_error, state, status
         def receive(result):
-            data, core_error, state, status = result
+            data, core_error, state, (status, status_values) = result
             if state is not None:
                 self.set_management_state(state)
-            self.management_status = status
+            self._set_management_status(status, **status_values)
             if data:
-                self._receive(data)
+                self.receive_snapshot(data)
             else:
                 self.connected = False
-                self.status.set_label("核心未连接：" + (core_error or "请检查 ZFly 运行信息。"))
+                self.status.set_label(tr("核心未连接：{message}", message=tr(core_error or "请检查 ZFly 运行信息。")))
                 self.settings_panel.receive()
                 self.profiles_panel.receive()
             self.workspace_panel.receive(refresh=True)
             self.catalog_panel.receive()
-        self._submit(work, receive, background=True)
+        self.submit(work, receive, background=True)
 
     def manage(self, command, receive=None, pending=None, done=None, on_error=None, background=False):
         if not self.management_client or self.management_state is None:
-            (on_error or self.toast)("请等待 ZFly 本地运行时就绪。")
+            (on_error or self.toast)(tr("请等待 ZFly 本地运行时就绪。"))
             if done:
                 done()
             return False
@@ -636,7 +654,7 @@ class Window(Adw.ApplicationWindow):
             if self.preview and (command["action"] == "network.save" or (
                 command["action"] == "workspace.write" and command.get("section") == "core"
             )):
-                self._receive(self.controller.snapshot())
+                self.receive_snapshot(self.controller.snapshot())
             else:
                 self.settings_panel.receive()
                 self.profiles_panel.receive()
@@ -645,10 +663,10 @@ class Window(Adw.ApplicationWindow):
             self.workspace_panel.receive()
             self.catalog_panel.receive()
             if not command["action"].endswith((".read", ".list")):
-                self.toast("已更新演示数据" if self.preview else "操作已完成。")
+                self.toast(tr("已更新演示数据") if self.preview else tr("操作已完成。"))
             if not command["action"].endswith((".read", ".list")):
                 self.refresh()
-        accepted = self._submit(lambda: management.perform(command), apply, action=True,
+        accepted = self.submit(lambda: management.perform(command), apply, action=True,
                                 done=complete, on_error=on_error, background=background)
         if not accepted:
             complete()
@@ -666,7 +684,7 @@ class Window(Adw.ApplicationWindow):
             self.delay_scope = scope
         self.management_state = state
 
-    def _receive(self, data):
+    def receive_snapshot(self, data):
         previous = self.data["proxies"]["proxies"] if self.data else {}
         proxies = data["proxies"]["proxies"]
         for name in set(self.delays) | set(self.delay_errors):
@@ -676,17 +694,17 @@ class Window(Adw.ApplicationWindow):
                 self.last_proxies = None
         self.data = data
         self.connected = True
-        self.status.set_label("本地运行时未连接" if self.management_state is None else "离线预览 · 无系统变更" if self.preview else "代理运行中" if self.management_state["running"] else "代理已停止")
+        self.status.set_label(tr("本地运行时未连接") if self.management_state is None else tr("离线预览 · 无系统变更") if self.preview else tr("代理运行中") if self.management_state["running"] else tr("代理已停止"))
         connections = data["connections"]
         values = {
             "累计下载": size(connections.get("downloadTotal")),
             "累计上传": size(connections.get("uploadTotal")),
             "当前连接": str(len(connections.get("connections") or [])),
             "核心内存": size(connections.get("memory")),
-            "路由模式": {"rule": "规则", "global": "全局", "direct": "直连"}.get(data["configs"].get("mode"), "—"),
+            "路由模式": tr({"rule": "规则", "global": "全局", "direct": "直连"}.get(data["configs"].get("mode"), "—")),
             "代理端口": str(data["configs"].get("mixed-port", "—")),
             "核心版本": data["version"]["version"],
-            "最近更新": "演示数据" if self.preview else datetime.now().strftime("%H:%M:%S"),
+            "最近更新": tr("演示数据") if self.preview else datetime.now().strftime("%H:%M:%S"),
         }
         for name, value in values.items():
             self.metric_rows[name].set_label(value)
@@ -706,18 +724,18 @@ class Window(Adw.ApplicationWindow):
             selected = current.get_string() if current else None
             self.group_picker.set_model(Gtk.StringList.new(groups))
             self.group_picker.set_selected(groups.index(selected) if selected in groups else 0)
-        if self.page == "代理组" and (force or proxies != self.last_proxies):
+        if self.page == Page.PROXIES and (force or proxies != self.last_proxies):
             self._render_proxies()
             self.last_proxies = proxies
         connections = self.data["connections"].get("connections") or []
-        if self.page == "连接" and (force or connections != self.last_connections):
+        if self.page == Page.CONNECTIONS and (force or connections != self.last_connections):
             self._render_connections()
             self.last_connections = connections
         self._update_overview()
 
     def _render_proxies(self):
         selected_group = self.group_picker.get_selected_item()
-        self.measure_button.set_label("取消测速" if selected_group and selected_group.get_string() in self.measurements else "整组测速")
+        self.measure_button.set_label(tr("取消测速") if selected_group and selected_group.get_string() in self.measurements else tr("整组测速"))
         self.proxy_empty.set_visible(False)
         self.proxy_no_results.set_visible(False)
         self.unfix_button.set_visible(False)
@@ -725,13 +743,15 @@ class Window(Adw.ApplicationWindow):
             return
         clear(self.proxy_list)
         self.proxy_list.set_visible(False)
+        proxies = self.data["proxies"]["proxies"]
         selected = self.group_picker.get_selected_item()
         if not selected:
-            self.group_note.set_label("暂无代理组，请先添加并选择配置。")
-            self.proxy_empty.set_visible(True)
+            has_groups = bool(group_names(proxies, self.data["configs"].get("mode", "rule")))
+            self.group_note.set_label(tr("没有匹配的代理组或节点。") if has_groups else tr("暂无代理组，请先添加并选择配置。"))
+            self.proxy_no_results.set_visible(has_groups)
+            self.proxy_empty.set_visible(not has_groups)
             return
         name = selected.get_string()
-        proxies = self.data["proxies"]["proxies"]
         group = proxies.get(name)
         if group is None:
             self.last_proxies = None
@@ -742,7 +762,7 @@ class Window(Adw.ApplicationWindow):
         self.unfix_button.set_visible(automatic and bool(group.get("fixed")))
         self.unfix_button.set_sensitive(not self.busy and self.connected)
         members = group.get("all", [])
-        self.group_note.set_label(f"{len(members)} 个节点 · " + ("自动选择，可手动固定" if automatic else "手动选择，立即生效" if manual else "由核心选择"))
+        self.group_note.set_label(tr("{nodes} · {hint}", nodes=trn("{count} 个节点", "{count} 个节点", len(members)), hint=tr("自动选择，可手动固定" if automatic else "手动选择，立即生效" if manual else "由核心选择")))
         query = self.search.get_text().casefold()
         names = [proxy for proxy in members if query in name.casefold() or query in proxy.casefold()]
         self.proxy_list.set_visible(bool(names))
@@ -753,8 +773,8 @@ class Window(Adw.ApplicationWindow):
             history = info.get("history") or []
             delay = self.delays.get(proxy, history[-1].get("delay") if history else None)
             error = self.delay_errors.get(proxy)
-            delay_text = "测速中…" if proxy in self.measuring else "测速失败" if error else "未测速" if delay is None else (f"{delay} ms" if delay > 0 else "不可用")
-            row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy') + (" · 已固定" if automatic and group.get("fixed") == proxy else ""))
+            delay_text = tr("测速中…") if proxy in self.measuring else tr("测速失败") if error else tr("未测速") if delay is None else (f"{delay} ms" if delay > 0 else tr("不可用"))
+            row = Adw.ActionRow(title=proxy, subtitle=info.get('type', 'Proxy') + (" · " + tr("已固定") if automatic and group.get("fixed") == proxy else ""))
             row.set_use_markup(False)
             row.set_title_lines(1)
             row.set_subtitle_lines(1)
@@ -764,7 +784,7 @@ class Window(Adw.ApplicationWindow):
             latency.add_css_class("caption")
             latency.add_css_class("warning" if error else "dim-label" if delay is None else "error" if delay <= 0 else "success" if delay < 150 else "warning")
             if error:
-                latency.set_tooltip_text(error)
+                latency.set_tooltip_text(tr(error))
             row.add_suffix(latency)
             row.add_suffix(action_button("取消" if proxy in self.measuring else "测速", lambda proxy=proxy: self.measure_proxy(proxy)))
             if manual:
@@ -773,7 +793,7 @@ class Window(Adw.ApplicationWindow):
                 row.add_suffix(button)
             self.proxy_list.append(row)
         if len(names) > 200:
-            self.group_note.set_label(self.group_note.get_label() + " · 显示前 200 项，请搜索筛选")
+            self.group_note.set_label(self.group_note.get_label() + " · " + tr("显示前 200 项，请搜索筛选"))
         self._update_overview()
 
     def _render_connections(self):
@@ -782,7 +802,8 @@ class Window(Adw.ApplicationWindow):
         items = self.data["connections"].get("connections") or []
         total = len(items)
         items = [item for item in items if query in (destination(item) + " " + str((item.get("metadata") or {}).get("process", ""))).casefold()]
-        self.connection_note.set_label((f"{len(items)} / {total} 条连接" if query else f"{total} 条连接") + (" · 显示前 200 条，请搜索筛选" if len(items) > 200 else ""))
+        count_text = trn("{filtered} / {total} 条连接", "{filtered} / {total} 条连接", total, filtered=len(items), total=total) if query else trn("{count} 条连接", "{count} 条连接", total)
+        self.connection_note.set_label(tr("{connections} · {limit}", connections=count_text, limit=tr("显示前 200 条，请搜索筛选")) if len(items) > 200 else count_text)
         self.connection_list.set_visible(bool(items))
         self.connection_empty.set_visible(not total)
         self.connection_no_results.set_visible(bool(total) and not items)
@@ -801,7 +822,7 @@ class Window(Adw.ApplicationWindow):
 
     def _action(self, method, *args):
         if self.busy:
-            self.toast("请等待当前操作完成后重试。")
+            self.toast(tr("请等待当前操作完成后重试。"))
             return
         if method == "delay":
             self.measure_proxy(args[0])
@@ -833,9 +854,9 @@ class Window(Adw.ApplicationWindow):
                 self.delays[args[0]] = value
                 self.delay_errors.pop(args[0], None)
                 self.last_proxies = None
-            self._receive(data)
+            self.receive_snapshot(data)
 
-        self._submit(work, receive, action=True)
+        self.submit(work, receive, action=True)
 
     def _cancel_measurements(self):
         for cancel in self.measurements.values():
@@ -927,11 +948,11 @@ class Window(Adw.ApplicationWindow):
         self._render_proxies()
 
     def settings(self):
-        dialog = Adw.MessageDialog(transient_for=self, modal=True, heading="ZFly 独立运行时",
-            body=self.management_status + "\n" + self.management_endpoint + "\n数据目录：" + self.data_directory)
-        dialog.add_response("close", "好")
+        dialog = Adw.MessageDialog(transient_for=self, modal=True, heading=tr("ZFly 独立运行时"),
+            body=self.display_management_status() + "\n" + self.management_endpoint + "\n" + tr("数据目录：{path}", path=self.data_directory))
+        dialog.add_response("close", tr("好"))
         if not self.connected or self.management_state is None:
-            dialog.add_response("retry", "重试启动")
+            dialog.add_response("retry", tr("重试启动"))
             dialog.connect("response", lambda _dialog, response: self.start_runtime() if response == "retry" else None)
         dialog.present()
 

@@ -10,3 +10,5 @@ class ProxyOrderingTests(unittest.TestCase):
         self.assertEqual(group_names(proxies, 'global'), ['Z', 'A', 'GLOBAL'])
         self.assertEqual(group_names(proxies, query='two'), ['Z'])
         self.assertEqual(group_names(proxies, query='missing'), [])
+        unordered = {'B': {'all': []}, 'A': {'all': []}, 'GLOBAL': {'all': []}}
+        self.assertEqual(group_names(unordered), ['B', 'A'])

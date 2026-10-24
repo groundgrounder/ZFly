@@ -1,0 +1,8 @@
+#!/bin/sh
+export PYTHONPATH=/usr/share/zfly
+export ZFLY_EXECUTABLE=/usr/bin/zfly
+export ZFLY_CORE=/usr/lib/zfly/mihomo
+export ZFLY_CORE_KIND=mihomo
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
+exec /usr/bin/python3 -m zfly "$@"

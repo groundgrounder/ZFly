@@ -2,6 +2,7 @@
 import base64
 from pathlib import Path
 
+from .i18n import tr, trn
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from .controller import ControllerError
@@ -13,19 +14,19 @@ from .ui import (EmptyState, SectionPage, button, entry, switch,
 
 class ProfilesPanel(SectionPage):
     def __init__(self, window):
-        super().__init__(title="配置与订阅")
+        super().__init__(title=tr("配置与订阅"))
         self.window = window
         self.profiles_key = None
         self.expanded_profiles = set()
-        self.bridge_note = Adw.PreferencesGroup(description="添加订阅、导入 YAML，或创建自己的配置。")
+        self.bridge_note = Adw.PreferencesGroup(description=tr("添加订阅、导入 YAML，或创建自己的配置。"))
         self.add(self.bridge_note)
         self.profile_actions = Adw.PreferencesGroup()
         self.add(self.profile_actions)
-        actions = Adw.ActionRow(title="配置管理")
+        actions = Adw.ActionRow(title=tr("配置管理"))
         actions.add_suffix(primary_button(button("添加订阅", lambda: self.profile_properties())))
         actions.add_suffix(button("导入 YAML", self.import_file))
         self.profile_actions.add(actions)
-        custom = Adw.ActionRow(title="自定义配置")
+        custom = Adw.ActionRow(title=tr("自定义配置"))
         custom.add_suffix(button("创建", self.create_profile))
         self.profile_actions.add(custom)
         self.profile_items = Adw.PreferencesGroup()
@@ -40,8 +41,8 @@ class ProfilesPanel(SectionPage):
     def receive(self):
         state = self.window.management_state
         self.profile_actions.set_sensitive(state is not None)
-        self.bridge_note.set_description("离线预览 · 所有操作仅修改演示数据" if self.window.preview else
-                                         self.window.management_status if "过期" in self.window.management_status else "添加订阅、导入 YAML，或创建自己的配置。" if state else self.window.management_status)
+        self.bridge_note.set_description(tr("离线预览 · 所有操作仅修改演示数据") if self.window.preview else
+                                         self.window.display_management_status() if "过期" in self.window.management_status else tr("添加订阅、导入 YAML，或创建自己的配置。") if state else self.window.display_management_status())
         if state is None:
             self.profiles_key = None
             self._render_profiles([])
@@ -59,7 +60,7 @@ class ProfilesPanel(SectionPage):
         for profile in profiles:
             active = self.window.management_state["currentProfileID"] == profile["id"]
             title = profile["label"]
-            row = Adw.ExpanderRow(title=title, subtitle={"url": "订阅", "file": "本地 YAML", "custom": "自定义配置"}.get(profile["type"], profile["type"]))
+            row = Adw.ExpanderRow(title=title, subtitle=tr({"url": "订阅", "file": "本地 YAML", "custom": "自定义配置"}.get(profile["type"], profile["type"])))
             row.set_use_markup(False)
             row.add_prefix(Gtk.Image(icon_name="object-select-symbolic" if active else "document-new-symbolic"))
             row.set_expanded(profile["id"] in self.expanded_profiles)
@@ -70,7 +71,7 @@ class ProfilesPanel(SectionPage):
                     self.expanded_profiles.discard(identity)
             row.connect("notify::expanded", expanded)
             group.add(row)
-            actions = Adw.ActionRow(title="操作")
+            actions = Adw.ActionRow(title=tr("操作"))
             use = button("使用中" if active else "使用", lambda p=profile: self.window.manage({"action": "profile.select", "id": p["id"]}))
             use.set_sensitive(not active)
             actions.add_suffix(use)
@@ -80,24 +81,25 @@ class ProfilesPanel(SectionPage):
             actions.add_suffix(delete)
             row.add_row(actions)
             if profile["type"] == "url":
-                info = Adw.ActionRow(title="订阅", subtitle=f"自动更新：{'每 ' + str(profile['updateHours']) + ' 小时' if profile['autoUpdate'] else '关闭'} · {profile.get('updated') or '尚未更新'}")
+                interval = trn("每 {count} 小时", "每 {count} 小时", profile["updateHours"]) if profile["autoUpdate"] else tr("已关闭")
+                info = Adw.ActionRow(title=tr("订阅"), subtitle=tr("自动更新：{interval} · {updated}", interval=interval, updated=profile.get("updated") or tr("尚未更新")))
                 info.set_use_markup(False)
                 info.add_suffix(button("更新订阅", lambda p=profile: self.window.manage({"action": "profile.update", "id": p["id"]})))
                 row.add_row(info)
                 error = self.window.management_state.get("updateErrors", {}).get(profile["id"])
                 if error:
-                    status = Adw.ActionRow(title="更新失败", subtitle=error)
+                    status = Adw.ActionRow(title=tr("更新失败"), subtitle=tr(error))
                     status.set_use_markup(False)
                     row.add_row(status)
                 if profile.get("total"):
                     used = (profile.get("upload") or 0) + (profile.get("download") or 0)
-                    usage = Adw.ActionRow(title="订阅用量", subtitle=f"{used:,} / {profile['total']:,} B")
+                    usage = Adw.ActionRow(title=tr("订阅用量"), subtitle=f"{used:,} / {profile['total']:,} B")
                     row.add_row(usage)
                 if profile.get("expire"):
                     from datetime import datetime
-                    expiry = Adw.ActionRow(title="到期", subtitle=datetime.fromtimestamp(profile["expire"]).isoformat(sep=" ", timespec="minutes"))
+                    expiry = Adw.ActionRow(title=tr("到期"), subtitle=datetime.fromtimestamp(profile["expire"]).isoformat(sep=" ", timespec="minutes"))
                     row.add_row(expiry)
-            files = Adw.ActionRow(title="配置文件", subtitle="节点与代理组在自定义资源管理，规则在规则与高级管理。" if profile["type"] == "custom" else "本地文件可编辑，订阅只读。")
+            files = Adw.ActionRow(title=tr("配置文件"), subtitle=tr("节点与代理组在自定义资源管理，规则在规则与高级管理。") if profile["type"] == "custom" else tr("本地文件可编辑，订阅只读。"))
             files.add_suffix(button("查看 / 编辑" if profile["type"] == "file" else "查看", lambda p=profile: self.read_profile(p)))
             files.add_suffix(button("导出", lambda p=profile: self.read_profile(p, export=True)))
             row.add_row(files)
@@ -122,14 +124,14 @@ class ProfilesPanel(SectionPage):
                     if url:
                         url.set_text(latest["url"]); auto.set_active(latest["autoUpdate"]); hours.set_text(str(latest["updateHours"]))
                     show_error(dialog, "")
-            self.window._submit(self.window.management_client.snapshot, receive, action=True, on_error=lambda message: show_error(dialog, message))
+            self.window.submit(self.window.management_client.snapshot, receive, action=True, on_error=lambda message: show_error(dialog, message))
         if profile:
             content.append(button("重新载入", reload))
         def save():
             show_error(dialog, "")
             interval = hours.get_text() if hours and auto.get_active() else str(profile["updateHours"] if profile else 24)
             if not interval.isdecimal() or not 1 <= int(interval) <= 8760:
-                show_error(dialog, "自动更新间隔应为 1–8760 小时。", hours)
+                show_error(dialog, tr("自动更新间隔应为 1–8760 小时。"), hours)
                 return
             command = {"action": "profile.edit" if profile else "profile.add", "label": label.get_text().strip(), "url": url.get_text().strip() if url else profile["url"], "autoUpdate": auto.get_active() if auto else profile["autoUpdate"], "updateHours": int(interval)}
             if profile:
@@ -154,7 +156,7 @@ class ProfilesPanel(SectionPage):
         def create():
             name = label.get_text().strip()
             if not name:
-                show_error(dialog, "请填写名称。", label)
+                show_error(dialog, tr("请填写名称。"), label)
                 return
             self.window.manage({"action": "profile.create", "label": name}, lambda _result: dialog.close(), pending=dialog, on_error=lambda message: show_error(dialog, message))
         create_button = primary_button(button("创建", create))
@@ -171,23 +173,23 @@ class ProfilesPanel(SectionPage):
         return dialog, content, group, error
 
     def delete_profile(self, profile):
-        dialog = Adw.MessageDialog(transient_for=self.window, modal=True, heading="删除配置？", body=f"将删除“{profile['label']}”及其本地文件。")
-        dialog.add_response("cancel", "取消")
-        dialog.add_response("delete", "删除")
+        dialog = Adw.MessageDialog(transient_for=self.window, modal=True, heading=tr("删除配置？"), body=tr("将删除“{name}”及其本地文件。", name=profile["label"]))
+        dialog.add_response("cancel", tr("取消"))
+        dialog.add_response("delete", tr("删除"))
         dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_close_response("cancel")
         dialog.connect("response", lambda _dialog, response: self.window.manage({"action": "profile.delete", "id": profile["id"], "revision": profile.get("revision")}) if response == "delete" else None)
         dialog.present()
 
     def import_file(self):
-        chooser = Gtk.FileChooserNative(title="导入 YAML", transient_for=self.window, action=Gtk.FileChooserAction.OPEN, accept_label="导入", cancel_label="取消")
+        chooser = Gtk.FileChooserNative(title=tr("导入 YAML"), transient_for=self.window, action=Gtk.FileChooserAction.OPEN, accept_label=tr("导入"), cancel_label=tr("取消"))
         def response(dialog, result):
             target = dialog.get_file() if result == Gtk.ResponseType.ACCEPT else None
             dialog.destroy()
             if result != Gtk.ResponseType.ACCEPT:
                 return
             if target is None:
-                self.window.toast("请选择要导入的 YAML 文件。")
+                self.window.toast(tr("请选择要导入的 YAML 文件。"))
                 return
             cancellable = Gio.Cancellable()
             self.window.file_cancellables.add(cancellable)
@@ -196,8 +198,8 @@ class ProfilesPanel(SectionPage):
                 name = target.get_basename() or "导入配置.yaml"
                 return {"action": "profile.import", "label": Path(name).stem,
                         "data": base64.b64encode(data).decode()}
-            self.window._submit(read, lambda command: self.window.manage(command), action=True, done=lambda: self.window.file_cancellables.discard(cancellable))
-            self.window.toast("正在读取文件，可关闭窗口取消。")
+            self.window.submit(read, lambda command: self.window.manage(command), action=True, done=lambda: self.window.file_cancellables.discard(cancellable))
+            self.window.toast(tr("正在读取文件，可关闭窗口取消。"))
         chooser.connect("response", response)
         chooser.show()
 
@@ -209,7 +211,7 @@ class ProfilesPanel(SectionPage):
             try:
                 text = None if export else data.decode("utf-8-sig")
             except UnicodeDecodeError:
-                raise ControllerError("文件不是 UTF-8 文本，请导出后使用外部编辑器。") from None
+                raise ControllerError(tr("文件不是 UTF-8 文本，请导出后使用外部编辑器。")) from None
             return result, file, data, text
         def receive(value):
             result, file, data, text = value
@@ -218,10 +220,10 @@ class ProfilesPanel(SectionPage):
                 self.export_file(file["name"], data)
             else:
                 self.edit_file(profile, file, text)
-        self.window._submit(work, receive, action=True)
+        self.window.submit(work, receive, action=True)
 
     def export_file(self, name, data):
-        chooser = Gtk.FileChooserNative(title="导出 YAML", transient_for=self.window, action=Gtk.FileChooserAction.SAVE, accept_label="导出", cancel_label="取消")
+        chooser = Gtk.FileChooserNative(title=tr("导出 YAML"), transient_for=self.window, action=Gtk.FileChooserAction.SAVE, accept_label=tr("导出"), cancel_label=tr("取消"))
         chooser.set_current_name(Path(name).name)
         def response(dialog, result):
             try:
@@ -230,7 +232,7 @@ class ProfilesPanel(SectionPage):
                     if target:
                         write_file(target, data)
             except Exception:
-                self.window.toast("导出失败，请检查目标文件权限。")
+                self.window.toast(tr("导出失败，请检查目标文件权限。"))
             finally:
                 dialog.destroy()
         chooser.connect("response", response)
@@ -238,7 +240,7 @@ class ProfilesPanel(SectionPage):
 
     def edit_file(self, profile, file, text):
         dialog, content, _header = modal_window(self.window, profile["label"], 760, 620, scroll=False)
-        content.append(Gtk.Label(label="保存前由核心校验。订阅只读；加密文件请使用外部编辑器。", wrap=True, xalign=0))
+        content.append(Gtk.Label(label=tr("保存前由核心校验。订阅只读；加密文件请使用外部编辑器。"), wrap=True, xalign=0))
         editor = Gtk.TextView(monospace=True, editable=profile["type"] == "file")
         buffer = editor.get_buffer()
         loading, closed = [False], [False]
@@ -268,9 +270,9 @@ class ProfilesPanel(SectionPage):
             if loading[0] or not buffer.get_modified():
                 closed[0] = True
                 return False
-            confirmation = Adw.MessageDialog(transient_for=dialog, modal=True, heading="放弃尚未保存的修改？")
-            confirmation.add_response("cancel", "继续编辑")
-            confirmation.add_response("discard", "放弃修改")
+            confirmation = Adw.MessageDialog(transient_for=dialog, modal=True, heading=tr("放弃尚未保存的修改？"))
+            confirmation.add_response("cancel", tr("继续编辑"))
+            confirmation.add_response("discard", tr("放弃修改"))
             confirmation.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
             confirmation.set_close_response("cancel")
             def response(_confirmation, result):
@@ -302,7 +304,7 @@ class ProfilesPanel(SectionPage):
                         return base64.b64decode(current["data"], validate=True).decode("utf-8-sig")
                     def apply(value):
                         fill(value); revision[0] = current["revision"]; show_error(dialog, "")
-                    self.window._submit(decode, apply, action=True)
+                    self.window.submit(decode, apply, action=True)
                 self.window.manage({"action": "profile.read", "id": profile["id"]}, receive, on_error=lambda message: show_error(dialog, message))
             actions.append(button("重新载入", reload))
             actions.append(primary_button(button("校验并保存", save)))

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ZFly
+Comment=Standalone proxy and subscription manager
+Exec=zfly
+Icon=io.github.zfly.ZFly
+Terminal=false
+Categories=Network;
+StartupNotify=true

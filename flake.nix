@@ -46,6 +46,14 @@
                 install -Dm644 ${./assets/icons}/zfly-$size.png \
                   "$out/share/icons/hicolor/''${size}x''${size}/apps/io.github.zfly.ZFly.png"
               done
+              install -Dm644 ${./assets/tray-outline.svg} \
+                "$out/share/icons/hicolor/scalable/status/zfly-tray-stopped-symbolic.svg"
+              install -Dm644 ${./assets/tray-filled.svg} \
+                "$out/share/icons/hicolor/scalable/status/zfly-tray-running-symbolic.svg"
+              for state in stopped running; do
+                install -Dm644 ${./assets/icons}/zfly-tray-''${state}-symbolic.png \
+                  "$out/share/icons/hicolor/32x32/status/zfly-tray-''${state}-symbolic.png"
+              done
               # Desktop panels can cache a failed theme-name lookup before a
               # profile is updated. Point the launcher at our immutable image.
               substituteInPlace "$out/share/applications/io.github.zfly.ZFly.desktop" \

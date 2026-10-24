@@ -27,7 +27,9 @@ if SAFE_MODE:
     try:
         from zfly.app import Application, Window
         from zfly.controller import ControllerError
-        from gi.repository import Adw, Gio, GLib, Gtk
+        from zfly.i18n import get_language
+        from zfly.pages import Page
+        from gi.repository import Adw, Gdk, Gio, GLib, Gtk
         UI_AVAILABLE = True
     except (ImportError, ValueError):
         pass
@@ -49,8 +51,24 @@ class InterfaceTests(unittest.TestCase):
         Adw.init()
         cls.app = Application(preview=True)
         cls.app.register(None)
+        cls.icon_theme_directory = tempfile.TemporaryDirectory()
+        icon_directory = Path(cls.icon_theme_directory.name) / "hicolor" / "256x256" / "apps"
+        icon_directory.mkdir(parents=True)
+        source_icon = Path(__file__).resolve().parents[2] / "assets" / "icons" / "zfly-256.png"
+        (icon_directory / "io.github.zfly.ZFly.png").symlink_to(source_icon)
+        cls.icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        cls.icon_theme_search_path = cls.icon_theme.get_search_path()
+        cls.icon_theme.add_search_path(cls.icon_theme_directory.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.icon_theme.set_search_path(cls.icon_theme_search_path)
+        cls.icon_theme_directory.cleanup()
 
     def setUp(self):
+        self.config_directory = tempfile.TemporaryDirectory(prefix="zfly-ui-config-")
+        self.environment = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config_directory.name, "LC_ALL": "zh_CN.UTF-8"})
+        self.environment.start()
         self.window = Window(self.app, preview=True)
         self.window.present()
         self.wait(lambda: self.window.data is not None and not self.window.busy and not self.window.refreshing)
@@ -60,6 +78,8 @@ class InterfaceTests(unittest.TestCase):
         for window in Gtk.Window.list_toplevels():
             window.destroy()
         self.pump()
+        self.environment.stop()
+        self.config_directory.cleanup()
 
     def pump(self):
         context = GLib.MainContext.default()
@@ -74,6 +94,19 @@ class InterfaceTests(unittest.TestCase):
                 return
             time.sleep(.01)
         self.fail("GTK condition did not become true")
+
+    def present_at_size(self, width, height=760):
+        self.window.close()
+        for window in Gtk.Window.list_toplevels():
+            window.destroy()
+        self.pump()
+        self.window = Window(self.app, preview=True)
+        self.window.set_default_size(width, height)
+        self.window.present()
+        self.wait(lambda: self.window.data is not None and not self.window.busy and not self.window.refreshing and self.window.get_width() > 0)
+        allocated = self.window.get_width()
+        if allocated != width:
+            self.window.set_default_size(width + width - allocated, height)
 
     def click(self, root, text):
         item = next(child for child in descendants(root) if isinstance(child, Gtk.Button) and child.get_label() == text)
@@ -93,7 +126,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertTrue(icon.is_file())
         self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
-    def test_packaged_navigation_icons_are_available(self):
+    def test_source_navigation_icons_are_available(self):
         theme = Gtk.IconTheme.get_for_display(self.window.get_display())
         for name in ("document-new-symbolic", "network-transmit-receive-symbolic", "applications-engineering-symbolic", "preferences-system-symbolic", "io.github.zfly.ZFly"):
             with self.subTest(icon=name):
@@ -101,9 +134,9 @@ class InterfaceTests(unittest.TestCase):
 
     def test_profiles_navigation_does_not_change_settings_category(self):
         self.window.settings_panel.categories.set_selected(1)
-        self.window.navigate_to(1)
+        self.window.navigate_to(Page.PROFILES)
         self.assertIs(self.window.stack.get_visible_child(), self.window.profiles_panel)
-        self.window.navigate_to(7)
+        self.window.navigate_to(Page.SETTINGS)
         self.assertIs(self.window.stack.get_visible_child(), self.window.settings_panel)
         self.assertEqual(self.window.settings_panel.stack.get_visible_child_name(), "network")
         self.assertEqual(self.window.settings_panel.categories.get_model().get_n_items(), 4)
@@ -130,16 +163,26 @@ class InterfaceTests(unittest.TestCase):
         self.assertFalse(self.window.mode_buttons["global"].get_active())
 
     def test_node_search_has_a_recoverable_empty_state(self):
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         self.window.search.set_text("no_such_node_zfly_test")
         self.wait(lambda: self.window.proxy_no_results.get_visible())
         self.assertFalse(self.window.proxy_list.get_visible())
+        self.assertEqual(self.window.group_note.get_label(), "没有匹配的代理组或节点。")
         self.click(self.window.proxy_no_results, "清除搜索")
         self.wait(lambda: not self.window.proxy_no_results.get_visible())
         self.assertTrue(self.window.proxy_list.get_visible())
 
+    def test_empty_proxy_configuration_has_a_distinct_empty_state(self):
+        self.window.navigate_to(Page.PROXIES)
+        data = self.window.controller._data
+        data["proxies"]["proxies"] = {}
+        self.window._render_lists(force=True)
+        self.wait(lambda: self.window.proxy_empty.get_visible())
+        self.assertFalse(self.window.proxy_no_results.get_visible())
+        self.assertEqual(self.window.group_note.get_label(), "暂无代理组，请先添加并选择配置。")
+
     def test_connection_search_distinguishes_no_matches_from_no_connections(self):
-        self.window.navigate_to(3)
+        self.window.navigate_to(Page.CONNECTIONS)
         self.window.search.set_text("no_such_connection_zfly_test")
         self.wait(lambda: self.window.connection_no_results.get_visible())
         self.assertFalse(self.window.connection_empty.get_visible())
@@ -178,25 +221,95 @@ class InterfaceTests(unittest.TestCase):
         self.assertTrue(dialog.get_sensitive())
         self.assertTrue(dialog.get_deletable())
 
+
+    def test_language_switch_is_immediate_persistent_and_preserves_drafts(self):
+        self.window.settings_panel.core_fields["mixed-port"].set_text("7891")
+        self.window.navigate_to(Page.WORKSPACE)
+        self.wait(lambda: self.window.workspace_panel._key() in self.window.workspace_panel.drafts and not self.window.busy)
+        self.window.workspace_panel.buffer.set_text('{"unsaved": true}')
+        self.window.navigate_to(Page.SETTINGS)
+        self.window.settings_panel.categories.set_selected(2)
+        self.window.settings_panel.language_row.set_selected(2)
+        self.pump()
+        self.assertEqual(get_language(), "en")
+        self.assertEqual(self.window.startup_preferences.language(), "en")
+        self.assertIs(self.window.stack.get_visible_child(), self.window.settings_panel)
+        self.assertEqual(self.window.content_title.get_title(), "Settings")
+        self.window.navigate_to(Page.WORKSPACE)
+        labels = {child.get_label() for child in descendants(self.window.navigation) if isinstance(child, Gtk.Label)}
+        self.assertTrue({"Overview", "Profiles", "Proxies", "Connections", "Resources", "Rules", "Tools", "Settings"}.issubset(labels))
+        buffer = self.window.workspace_panel.buffer
+        self.assertEqual(buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True), '{"unsaved": true}')
+        self.assertEqual(self.window.settings_panel.core_fields["mixed-port"].get_text(), "7891")
+        preferences = json.loads(self.window.startup_preferences.preferences_path.read_text())
+        self.assertEqual(preferences["language"], "en")
+        self.window.navigate_to(Page.SETTINGS)
+        self.window.settings_panel.language_row.set_selected(1)
+        self.pump()
+        self.assertEqual(get_language(), "zh-Hans")
+        self.assertEqual(self.window.content_title.get_title(), "设置")
+        buffer = self.window.workspace_panel.buffer
+        self.assertEqual(buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True), '{"unsaved": true}')
+
+    def test_english_pages_and_dialog_fit_narrow_windows(self):
+        self.window.settings_panel.language_row.set_selected(2)
+        titles = {
+            Page.OVERVIEW: "Overview", Page.PROFILES: "Profiles", Page.PROXIES: "Proxies",
+            Page.CONNECTIONS: "Connections", Page.CATALOG: "Resources", Page.WORKSPACE: "Rules",
+            Page.TOOLS: "Tools", Page.SETTINGS: "Settings",
+        }
+        for width in (360, 680, 700, 701, 1040):
+            with self.subTest(width=width):
+                self.present_at_size(width)
+                self.wait(lambda: abs(self.window.get_width() - width) <= 2)
+                for page, title in titles.items():
+                    self.window.navigate_to(page)
+                    self.pump()
+                    self.wait(lambda: not self.window.busy and not self.window.refreshing)
+                    self.assertEqual(self.window.content_title.get_title(), title)
+                    self.assertLessEqual(self.window.get_width(), width + 2)
+        self.present_at_size(360)
+        self.window.profiles_panel.profile_properties()
+        self.wait(lambda: self.dialog() is not None and self.dialog().get_width() > 0)
+        dialog = self.dialog()
+        self.assertEqual(dialog.get_title(), "Subscribe")
+        self.assertLessEqual(dialog.get_width(), self.window.get_width())
+        visible_text = [child.get_label() for child in descendants(dialog) if isinstance(child, Gtk.Button) and child.get_label()]
+        self.assertEqual(visible_text, [text for text in visible_text if not any("\u4e00" <= char <= "\u9fff" for char in text)])
+
     def test_form_width_follows_a_narrow_main_window(self):
-        self.window.set_default_size(360, 760)
-        self.wait(lambda: self.window.get_width() == 360 and self.window.split.get_collapsed())
+        self.present_at_size(360)
+        self.wait(lambda: 0 < self.window.get_width() <= 360 and self.window.split.get_collapsed())
         self.window.profiles_panel.profile_properties()
         self.wait(lambda: self.dialog() is not None and self.dialog().get_width() > 0)
         self.assertLessEqual(self.dialog().get_width(), self.window.get_width())
         self.assertTrue(self.window.split.get_collapsed())
 
     def test_breakpoints_keep_navigation_available_at_each_width(self):
-        for width in (360, 680, 1040):
+        for width in (360, 680, 700, 701, 1040):
             with self.subTest(width=width):
-                self.window.set_default_size(width, 760)
-                self.wait(lambda: self.window.get_width() == width and self.window.split.get_collapsed() == (width <= 700))
-                self.window.navigate_to(1)
+                self.present_at_size(width)
+                self.wait(lambda: abs(self.window.get_width() - width) <= 2
+                          and self.window.split.get_collapsed() == (width <= 700))
+                self.window.navigate_to(Page.PROFILES)
                 self.assertIs(self.window.stack.get_visible_child(), self.window.profiles_panel)
                 self.assertTrue(self.window.split.get_show_content())
+                self.pump()
+                back_buttons = [child for child in descendants(self.window)
+                                if isinstance(child, Gtk.Button) and child.get_icon_name() == "go-previous-symbolic" and child.get_mapped()]
+                self.assertEqual(len(back_buttons), 1 if width <= 700 else 0)
+                if width <= 700:
+                    back_buttons[0].emit("clicked")
+                    self.pump()
+                    self.assertFalse(self.window.split.get_show_content())
+                    self.wait(lambda: not any(child.get_icon_name() == "go-previous-symbolic" and child.get_mapped()
+                                              for child in descendants(self.window) if isinstance(child, Gtk.Button)))
+                    navigation = self.window.navigation
+                    navigation.emit("row-activated", navigation.get_selected_row())
+                    self.assertTrue(self.window.split.get_show_content())
 
     def test_catalog_json_error_is_local_and_preserves_the_draft(self):
-        self.window.navigate_to(4)
+        self.window.navigate_to(Page.CATALOG)
         self.wait(lambda: not self.window.busy and not self.window.catalog_panel.loading)
         self.window.catalog_panel.open()
         self.wait(lambda: self.dialog() is not None)
@@ -209,22 +322,22 @@ class InterfaceTests(unittest.TestCase):
         self.assertTrue(editor.get_buffer().get_modified())
 
     def test_tools_reveal_diagnostic_results(self):
-        self.window.navigate_to(6)
+        self.window.navigate_to(Page.TOOLS)
         self.window.tools_panel.inspect("dnsQuery")
         self.wait(lambda: self.window.tools_panel.result_expander.get_expanded())
         buffer = self.window.tools_panel.output.get_buffer()
         self.assertIn("192.0.2.1", buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True))
 
     def test_workspace_reports_json_location_and_preserves_unsaved_text(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         panel = self.window.workspace_panel
         self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
         panel.buffer.set_text("{")
         panel.save()
         self.assertTrue(panel.error.get_visible())
         self.assertIn("第 1 行", panel.error.get_label())
-        self.window.navigate_to(0)
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.OVERVIEW)
+        self.window.navigate_to(Page.WORKSPACE)
         self.assertEqual(panel.buffer.get_text(panel.buffer.get_start_iter(), panel.buffer.get_end_iter(), True), "{")
 
     def test_catalog_edit_allows_previously_loaded_categories_to_reload(self):
@@ -237,7 +350,7 @@ class InterfaceTests(unittest.TestCase):
             management.perform({**command, "action": "catalog.save", "text": document["text"], "revision": document["revision"]})
         self.window.refresh()
         self.wait(lambda: not self.window.refreshing)
-        self.window.navigate_to(4)
+        self.window.navigate_to(Page.CATALOG)
         panel = self.window.catalog_panel
         self.wait(lambda: panel.key() in panel.cache and not self.window.busy)
         panel.kind.set_selected(1)
@@ -254,7 +367,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(len(panel.cache[group_key]), 1)
 
     def test_catalog_refresh_error_is_visible_with_cached_items(self):
-        self.window.navigate_to(4)
+        self.window.navigate_to(Page.CATALOG)
         panel = self.window.catalog_panel
         self.wait(lambda: panel.key() in panel.cache and not self.window.busy)
         panel.cache[panel.key()] = [{"id": "cached", "label": "已有节点", "detail": "socks5"}]
@@ -352,15 +465,15 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(self.window.power_button.get_label(), "启动代理")
 
     def test_restoring_all_data_reloads_editor_and_catalog_caches(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         workspace = self.window.workspace_panel
         self.wait(lambda: workspace._key() in workspace.drafts and not self.window.busy)
         workspace.buffer.set_text('{"draft": true}')
-        self.window.navigate_to(4)
+        self.window.navigate_to(Page.CATALOG)
         catalog = self.window.catalog_panel
         self.wait(lambda: catalog.key() in catalog.cache and not self.window.busy)
         catalog.cache[catalog.key()] = [{"id": "old", "label": "旧节点", "detail": "socks5"}]
-        self.window.navigate_to(6)
+        self.window.navigate_to(Page.TOOLS)
         manager = self.window.management_client
         original = manager.perform
         def restored(command):
@@ -372,12 +485,12 @@ class InterfaceTests(unittest.TestCase):
         self.window.manage({"action": "tool.run", "tool": "restoreDAVAll"})
         self.wait(lambda: not self.window.busy)
         self.assertFalse(catalog.cache)
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         self.wait(lambda: workspace._key() in workspace.drafts and not self.window.busy)
         self.assertEqual(workspace.drafts[workspace._key()]["text"], '{"restored": true}')
 
     def test_restoring_profiles_keeps_unrelated_unsaved_workspace_settings(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         workspace = self.window.workspace_panel
         self.wait(lambda: workspace._key() in workspace.drafts and not self.window.busy)
         workspace.buffer.set_text('{"keep": true}')
@@ -400,7 +513,7 @@ class InterfaceTests(unittest.TestCase):
             operation_release.wait(3)
         self.window.runtime = Runtime()
         try:
-            self.assertTrue(self.window._submit(operation, received.append, background=background, done=cleaned.set))
+            self.assertTrue(self.window.submit(operation, received.append, background=background, done=cleaned.set))
             self.window.preview = False
             self.window.close()
             self.assertTrue(self.window.closed)
@@ -413,7 +526,7 @@ class InterfaceTests(unittest.TestCase):
             self.assertTrue(self.window.get_sensitive())
             self.assertFalse(received)
             complete = threading.Event()
-            self.assertTrue(self.window._submit(lambda: None, lambda _: complete.set()))
+            self.assertTrue(self.window.submit(lambda: None, lambda _: complete.set()))
             self.wait(complete.is_set)
         finally:
             operation_release.set()
@@ -454,7 +567,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(f"{delay} ms", self.proxy_labels(name))
 
     def test_profile_switch_discards_another_profiles_latency(self):
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         self.measure_node("东京 / Tokyo", 9876)
         profile = next(item for item in self.window.management_state["profiles"]
                        if item["id"] != self.window.management_state["currentProfileID"])
@@ -464,7 +577,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("42 ms", self.proxy_labels("东京 / Tokyo"))
 
     def test_catalog_edits_invalidate_same_name_node_latency(self):
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         self.measure_node("东京 / Tokyo", 9876)
         manager = self.window.management_client
         command = {"action": "catalog.read", "section": "proxies"}
@@ -475,7 +588,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertNotIn("9876 ms", self.proxy_labels("东京 / Tokyo"))
 
     def test_new_core_history_replaces_cached_latency(self):
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         self.measure_node("东京 / Tokyo", 9876)
         self.window.controller._data["proxies"]["proxies"]["东京 / Tokyo"]["history"] = [{"delay": 12}]
         self.window.refresh()
@@ -484,7 +597,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertNotIn("9876 ms", self.proxy_labels("东京 / Tokyo"))
 
     def test_group_transport_failure_is_distinct_from_an_unavailable_node(self):
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         original = self.window.controller.delay
         def measure(name):
             if name == "东京 / Tokyo":
@@ -503,7 +616,7 @@ class InterfaceTests(unittest.TestCase):
         return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
 
     def test_readonly_history_refreshes_on_toolbar_refresh_and_reentry(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         panel = self.window.workspace_panel
         panel.section.set_selected(panel.section_names.index("logs"))
         self.wait(lambda: ("logs", None) in panel.drafts and not self.window.busy and not self.window.refreshing)
@@ -512,13 +625,13 @@ class InterfaceTests(unittest.TestCase):
         manager._documents[("logs", None)] = {**document, "text": '[{"Payload":"FIRST NEW LOG"}]', "revision": "first"}
         self.window.refresh()
         self.wait(lambda: "FIRST NEW LOG" in self.log_text() and not self.window.refreshing)
-        self.window.navigate_to(0)
+        self.window.navigate_to(Page.OVERVIEW)
         manager._documents[("logs", None)] = {**document, "text": '[{"Payload":"SECOND NEW LOG"}]', "revision": "second"}
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         self.wait(lambda: "SECOND NEW LOG" in self.log_text() and not self.window.busy and not self.window.refreshing)
 
     def test_toolbar_refresh_keeps_editable_unsaved_workspace_text(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         panel = self.window.workspace_panel
         self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
         panel.buffer.set_text('{"keep this draft": true}')
@@ -527,7 +640,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(self.log_text(), '{"keep this draft": true}')
 
     def test_preview_core_workspace_updates_overview_and_settings(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         panel = self.window.workspace_panel
         panel.section.set_selected(panel.section_names.index("core"))
         self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
@@ -604,7 +717,7 @@ class InterfaceTests(unittest.TestCase):
         return Chooser
 
     def test_workspace_export_is_private_and_replaces_the_selected_file(self):
-        self.window.navigate_to(5)
+        self.window.navigate_to(Page.WORKSPACE)
         panel = self.window.workspace_panel
         self.wait(lambda: panel._key() in panel.drafts and not self.window.busy)
         with tempfile.TemporaryDirectory(prefix="zfly-export-test-") as temporary:
@@ -635,7 +748,7 @@ class InterfaceTests(unittest.TestCase):
 
     def test_cancel_node_in_group_does_not_start_another_request(self):
         release, started = threading.Event(), threading.Event()
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         calls = []
         def delay(name):
             calls.append(name)
@@ -657,7 +770,7 @@ class InterfaceTests(unittest.TestCase):
 
     def test_overlapping_measurements_keep_progress_and_group_cancel_clears_it(self):
         release, started = threading.Event(), threading.Event()
-        self.window.navigate_to(2)
+        self.window.navigate_to(Page.PROXIES)
         calls = []
         group = self.window.group_picker.get_selected_item().get_string()
         def delay(name):
@@ -688,7 +801,7 @@ class InterfaceTests(unittest.TestCase):
 
     def test_readonly_poll_preserves_buffer_selection(self):
         panel = self.window.workspace_panel
-        self.window.page = '规则与高级'
+        self.window.page = Page.WORKSPACE
         panel.section.set_selected(panel.section_names.index('logs'))
         self.wait(lambda: panel.active_key in panel.drafts and not self.window.busy and not self.window.refreshing)
         panel.buffer.select_range(panel.buffer.get_start_iter(), panel.buffer.get_iter_at_offset(3))
@@ -697,7 +810,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertTrue(panel.buffer.get_has_selection())
 
     def test_proxy_picker_falls_back_when_selected_group_disappears(self):
-        self.window.page = '代理组'
+        self.window.page = Page.PROXIES
         proxies = self.window.data['proxies']['proxies']
         proxies.clear()
         proxies.update({'GLOBAL': {'type': 'Selector', 'all': ['second']}, 'second': {'type': 'Selector', 'all': ['DIRECT']}})

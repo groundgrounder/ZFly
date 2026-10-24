@@ -1,5 +1,6 @@
 import copy
 
+from .i18n import get_language, set_language, tr
 from gi.repository import Adw, Gtk
 
 from .controller import ControllerError, validate_config
@@ -18,55 +19,61 @@ class SettingsPanel(Gtk.Box):
         self.network_baseline = None
         self.core_fields = {}
         self.network_fields = {}
-        self.startup_preferences = StartupPreferences()
+        self.startup_preferences = window.startup_preferences
         self.startup_state = self.startup_preferences.state()
         self.updating_startup = False
+        self.updating_language = False
         self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(180)
-        categories = Gtk.DropDown(model=Gtk.StringList.new(["核心设置", "网络接管", "外观", "应用启动"]), margin_start=24, margin_end=24, margin_top=24)
+        categories = Gtk.DropDown(model=Gtk.StringList.new([tr("核心设置"), tr("网络接管"), tr("外观"), tr("应用启动")]), margin_start=24, margin_end=24, margin_top=24, hexpand=True)
         categories.connect("notify::selected", lambda row, _param: self.stack.set_visible_child_name(["core", "network", "appearance", "startup"][row.get_selected()]))
         self.categories = categories
         self.append(Adw.Clamp(child=categories, maximum_size=900, tightening_threshold=680))
         self.append(self.stack)
-        self.core = SectionPage(title="核心设置")
-        self.network = SectionPage(title="网络接管")
-        self.appearance = SectionPage(title="外观")
-        self.startup = SectionPage(title="应用启动")
+        self.core = SectionPage(title=tr("核心设置"))
+        self.network = SectionPage(title=tr("网络接管"))
+        self.appearance = SectionPage(title=tr("外观"))
+        self.startup = SectionPage(title=tr("应用启动"))
         for name, page in (("core", self.core), ("network", self.network), ("appearance", self.appearance), ("startup", self.startup)):
             self.stack.add_titled(page, name, page.get_title())
-        core_actions = Adw.PreferencesGroup(title="运行时核心设置", description="修改由 ZFly 持久保存；失败时恢复原设置。")
+        core_actions = Adw.PreferencesGroup(title=tr("运行时核心设置"), description=tr("修改由 ZFly 持久保存；失败时恢复原设置。"))
         self.core.add(core_actions)
-        row = Adw.ActionRow(title="应用当前编辑")
+        row = Adw.ActionRow(title=tr("应用当前编辑"))
         row.add_suffix(button("重新载入", self.reload_core))
         row.add_suffix(primary_button(button("应用", self.save_core)))
         core_actions.add(row)
         self.core_group = Adw.PreferencesGroup()
         self.core.add(self.core_group)
-        self.core_note = Adw.PreferencesGroup(description="请先连接核心。")
+        self.core_note = Adw.PreferencesGroup(description=tr("请先连接核心。"))
         self.core.add(self.core_note)
-        self.network_note = Adw.PreferencesGroup(title="持久化网络设置", description="等待本地运行时就绪。")
+        self.network_note = Adw.PreferencesGroup(title=tr("持久化网络设置"), description=tr("等待本地运行时就绪。"))
         self.network.add(self.network_note)
-        self.running_row = Adw.ActionRow(title="核心运行请求")
+        self.running_row = Adw.ActionRow(title=tr("核心运行请求"))
         self.run_button = button("启动 / 停止", self.toggle_running)
         self.running_row.add_suffix(self.run_button)
         self.network_note.add(self.running_row)
         self.network_actions = Adw.PreferencesGroup()
         self.network.add(self.network_actions)
-        actions = Adw.ActionRow(title="保存到 ZFly")
+        actions = Adw.ActionRow(title=tr("保存到 ZFly"))
         actions.add_suffix(button("重新载入", self.reload_network))
         actions.add_suffix(primary_button(button("保存", self.save_network)))
         self.network_actions.add(actions)
-        self.network_group = Adw.PreferencesGroup(description="系统代理支持 GNOME 桌面；TUN 需要独立核心具有系统权限。系统 DNS 接管尚未实现。")
+        self.network_group = Adw.PreferencesGroup(description=tr("系统代理支持 GNOME 桌面；TUN 需要独立核心具有系统权限。系统 DNS 接管尚未实现。"))
         self.network.add(self.network_group)
-        appearance = Adw.PreferencesGroup(title="GTK / libadwaita 原生外观")
+        appearance = Adw.PreferencesGroup(title=tr("GTK / libadwaita 原生外观"))
         self.appearance.add(appearance)
-        theme = choice(appearance, "主题（本次运行）", ["跟随系统", "浅色", "深色"], "跟随系统")
+        self.theme_row = theme = choice(appearance, "主题（本次运行）", ["跟随系统", "浅色", "深色"], "跟随系统")
         theme.connect("notify::selected", lambda row, _param: Adw.StyleManager.get_default().set_color_scheme(
             [Adw.ColorScheme.DEFAULT, Adw.ColorScheme.FORCE_LIGHT, Adw.ColorScheme.FORCE_DARK][row.get_selected()]))
+        self.language_values = ["system", "zh-Hans", "en"]
+        self.language_row = Adw.ComboRow(title=tr("语言"), model=Gtk.StringList.new([tr("跟随系统"), tr("中文"), "English"]))
+        self.language_row.set_selected(self.language_values.index(get_language()))
+        self.language_row.connect("notify::selected", self._save_language)
+        appearance.add(self.language_row)
         login_enabled, start_hidden = self.startup_state
         startup_group = Adw.PreferencesGroup(
-            title="登录启动",
-            description="支持托盘的桌面可隐藏到托盘；没有可用托盘时会显示窗口。关闭窗口可留在后台，托盘菜单可退出。",
+            title=tr("登录启动"),
+            description=tr("支持托盘的桌面可隐藏到托盘；没有可用托盘时会显示窗口。关闭窗口可留在后台，托盘菜单可退出。"),
         )
         self.startup.add(startup_group)
         self.login_row = switch(startup_group, "登录时启动 ZFly", login_enabled)
@@ -75,6 +82,32 @@ class SettingsPanel(Gtk.Box):
         self.hidden_row.set_sensitive(not window.preview)
         self.login_row.connect("notify::active", self._save_startup)
         self.hidden_row.connect("notify::active", self._save_startup)
+
+
+    def _save_language(self, *_args):
+        if self.updating_language:
+            return
+        value = self.language_values[self.language_row.get_selected()]
+        previous = get_language()
+        if value == previous:
+            return
+        changed = False
+        try:
+            self.startup_preferences.configure_language(value)
+            changed = True
+            set_language(value)
+            self.window.retranslate()
+        except Exception as error:
+            if changed:
+                set_language(previous)
+                try:
+                    self.startup_preferences.configure_language(previous)
+                except Exception as rollback_error:
+                    error = rollback_error
+            self.updating_language = True
+            self.language_row.set_selected(self.language_values.index(previous))
+            self.updating_language = False
+            self.window.toast(str(error))
 
     def _save_startup(self, *_args):
         if self.updating_startup:
@@ -101,11 +134,11 @@ class SettingsPanel(Gtk.Box):
         self.network_group.set_sensitive(available)
         self.run_button.set_sensitive(available)
         if not available:
-            self.network_note.set_description("请等待 ZFly 启动完成。")
+            self.network_note.set_description(tr("请等待 ZFly 启动完成。"))
             return
-        self.network_note.set_description(f"核心：{state['coreStatus']} · TUN 授权：{state['tunAuthorization']} · 保存后由 ZFly 应用。")
-        self.running_row.set_subtitle("开启" if state["running"] else "关闭")
-        self.run_button.set_label("停止核心" if state["running"] else "启动核心")
+        self.network_note.set_description(tr("核心：{core} · TUN 授权：{tun} · 保存后由 ZFly 应用。", core=tr(state["coreStatus"]), tun=tr(state["tunAuthorization"])))
+        self.running_row.set_subtitle(tr("开启") if state["running"] else tr("已停止"))
+        self.run_button.set_label(tr("停止核心") if state["running"] else tr("启动核心"))
         if self.network_baseline is None or (
             self.network_baseline != state["network"] and not self._dirty(self.network_fields, self.network_baseline)
         ):
@@ -171,11 +204,11 @@ class SettingsPanel(Gtk.Box):
             else:
                 continue
             self.core_fields[key] = row
-        self.core_note.set_description("混合端口范围为 1–65535；HTTP / SOCKS 端口 0 表示关闭，监听端口不能重复。轮询不会覆盖正在编辑的草稿，重新载入会丢弃草稿。")
+        self.core_note.set_description(tr("混合端口范围为 1–65535；HTTP / SOCKS 端口 0 表示关闭，监听端口不能重复。轮询不会覆盖正在编辑的草稿，重新载入会丢弃草稿。"))
 
     def save_core(self):
         if self.core_baseline is None or not self.window.connected:
-            self.window.toast("请先连接核心。")
+            self.window.toast(tr("请先连接核心。"))
             return
         try:
             draft = copy.deepcopy(self.core_baseline)
@@ -187,7 +220,7 @@ class SettingsPanel(Gtk.Box):
                 elif key in CONFIG_PORTS:
                     text = row.get_text().strip()
                     if not text.isdecimal():
-                        raise ControllerError("端口应为 0–65535 的整数。")
+                        raise ControllerError(tr("端口应为 0–65535 的整数。"))
                     value = int(text)
                 else:
                     value = row.get_text()
@@ -210,14 +243,14 @@ class SettingsPanel(Gtk.Box):
             if data is None:
                 self.core_baseline = copy.deepcopy(draft)
                 self.window.connected = False
-                self.window.toast("设置已保存，最新状态暂时无法读取，请刷新查看。")
+                self.window.toast(tr("设置已保存，最新状态暂时无法读取，请刷新查看。"))
                 self.window.refresh()
                 return
             self.window.set_management_state(state)
-            self.window._receive(data)
+            self.window.receive_snapshot(data)
             self.reload_core()
-            self.window.toast("已应用运行时设置。")
-        self.window._submit(work, receive, action=True)
+            self.window.toast(tr("已应用运行时设置。"))
+        self.window.submit(work, receive, action=True)
 
     def reload_network(self):
         state = self.window.management_state
@@ -225,7 +258,7 @@ class SettingsPanel(Gtk.Box):
             return
         self.network_baseline = copy.deepcopy(state["network"])
         group = self._replace_group(self.network, "network_group")
-        group.set_description("设置由 ZFly 保存并应用，失败时还原原配置。系统 DNS 接管尚未实现。")
+        group.set_description(tr("设置由 ZFly 保存并应用，失败时还原原配置。系统 DNS 接管尚未实现。"))
         fields = self.network_fields = {}
         for key, title in (("tunEnabled", "启用 TUN"), ("systemProxy", "系统代理"), ("bypassPrivateRoute", "绕过私有路由"), ("ipv6", "IPv6"), ("allowLan", "允许局域网"), ("tcpConcurrent", "TCP 并发")):
             fields[key] = switch(group, title, self.network_baseline[key])
@@ -248,7 +281,7 @@ class SettingsPanel(Gtk.Box):
                 elif key == "mixedPort":
                     text = row.get_text().strip()
                     if not text.isdecimal():
-                        raise ControllerError("混合端口应为整数。")
+                        raise ControllerError(tr("混合端口应为整数。"))
                     value = int(text)
                 elif key == "bypassDomains":
                     value = [item.strip() for item in row.get_text().split(",") if item.strip()]

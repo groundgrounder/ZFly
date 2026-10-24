@@ -8,6 +8,7 @@ from pathlib import Path
 import urllib.parse
 import uuid
 
+from .i18n import tr
 from .controller import Controller, ControllerError
 from zfly_runtime.schema import NETWORK_CONFIG_FIELDS
 from .catalog_model import PreviewCatalog
@@ -33,18 +34,18 @@ def preview_document(section):
         "app": {"autoRun": False, "testUrl": "https://www.gstatic.com/generate_204", "checkCertificate": True, "userAgent": ""},
         "dav": {"uri": "https://example.com/dav", "user": "", "fileName": "backup.zip", "password": None},
         "profileOverrides": {"dns": {}, "dns-override-keys": [], "ntp": {}, "sniffer": {}, "tun": {}, "proxy-providers": {}},
-        "logs": [{"LogLevel": "info", "Payload": "演示日志：配置载入完成"}],
+        "logs": [{"LogLevel": "info", "Payload": tr("演示日志：配置载入完成")}],
         "dnsQueries": [{"domain": "example.com", "type": "A", "answers": ["192.0.2.1"], "cached": True}],
     }.get(section, [])
     rules = section in ("globalRules", "profileRules")
-    return {"section": section, "title": WORKSPACE_SECTIONS[section], "text": "DOMAIN-SUFFIX,example.com,DIRECT\nMATCH,DIRECT" if rules else json.dumps(value, ensure_ascii=False, indent=2), "revision": "preview", "writable": section not in READONLY_SECTIONS, "format": "rules" if rules else "json"}
+    return {"section": section, "title": tr(WORKSPACE_SECTIONS[section]), "text": "DOMAIN-SUFFIX,example.com,DIRECT\nMATCH,DIRECT" if rules else json.dumps(value, ensure_ascii=False, indent=2), "revision": "preview", "writable": section not in READONLY_SECTIONS, "format": "rules" if rules else "json"}
 
 
 def validate_network(network):
     try:
         validate_runtime_network(network, require_tun_permission=False)
     except RuntimeErrorMessage as error:
-        raise ControllerError(str(error)) from None
+        raise ControllerError(tr(str(error))) from None
 
 
 def _valid_http_url(value):
@@ -63,41 +64,41 @@ def validate_profile_command(command, profile=None):
     if action in ("profile.add", "profile.import", "profile.create"):
         label = command.get("label", "")
         if not isinstance(label, str) or (label and not label.strip()):
-            raise ControllerError("配置名称不能为空。")
+            raise ControllerError(tr("配置名称不能为空。"))
         url = command.get("url", "")
         if not isinstance(url, str) or (action == "profile.add" and not _valid_http_url(url)):
-            raise ControllerError("请输入有效的 HTTP / HTTPS 订阅地址。")
+            raise ControllerError(tr("请输入有效的 HTTP / HTTPS 订阅地址。"))
         if type(command.get("autoUpdate", action == "profile.add")) is not bool:
-            raise ControllerError("自动更新开关无效。")
+            raise ControllerError(tr("自动更新开关无效。"))
         hours = command.get("updateHours", 24)
         if type(hours) is not int or not 1 <= hours <= 8760:
-            raise ControllerError("更新间隔应为 1–8760 小时。")
+            raise ControllerError(tr("更新间隔应为 1–8760 小时。"))
         if not isinstance(command.get("ageSecretKey", ""), str):
-            raise ControllerError("Age 解密密钥必须是文本。")
+            raise ControllerError(tr("Age 解密密钥必须是文本。"))
         if action == "profile.import":
             try:
                 if not isinstance(command.get("data"), str) or not base64.b64decode(command["data"], validate=True):
                     raise ValueError
             except (ValueError, TypeError, binascii.Error):
-                raise ControllerError("配置文件编码无效。") from None
+                raise ControllerError(tr("配置文件编码无效。")) from None
         return
     if action == "profile.edit" and profile is not None:
         if "label" in command and (not isinstance(command["label"], str) or not command["label"].strip()):
-            raise ControllerError("配置名称不能为空。")
+            raise ControllerError(tr("配置名称不能为空。"))
         if "url" in command and not isinstance(command["url"], str):
-            raise ControllerError("配置地址必须是文本。")
+            raise ControllerError(tr("配置地址必须是文本。"))
         if "autoUpdate" in command and type(command["autoUpdate"]) is not bool:
-            raise ControllerError("自动更新开关无效。")
+            raise ControllerError(tr("自动更新开关无效。"))
         if "updateHours" in command and (type(command["updateHours"]) is not int or not 1 <= command["updateHours"] <= 8760):
-            raise ControllerError("更新间隔应为 1–8760 小时。")
+            raise ControllerError(tr("更新间隔应为 1–8760 小时。"))
         if profile.get("type") == "url" and not _valid_http_url(command.get("url", profile.get("url"))):
-            raise ControllerError("请输入有效的 HTTP / HTTPS 订阅地址。")
+            raise ControllerError(tr("请输入有效的 HTTP / HTTPS 订阅地址。"))
 
 
 def validate_state(state):
     try:
         if state["apiVersion"] != 1:
-            raise ControllerError("本地运行时版本不兼容，请重新安装完整的 ZFly。")
+            raise ControllerError(tr("本地运行时版本不兼容，请重新安装完整的 ZFly。"))
         validate_network(state["network"])
         if not isinstance(state["profiles"], list) or type(state["running"]) is not bool:
             raise ValueError
@@ -115,7 +116,7 @@ def validate_state(state):
             raise ValueError
         return state
     except (KeyError, TypeError, ValueError):
-        raise ControllerError("本地运行时返回了无法识别的数据。") from None
+        raise ControllerError(tr("本地运行时返回了无法识别的数据。")) from None
 
 
 class ManagementClient(Controller):
@@ -129,7 +130,7 @@ class ManagementClient(Controller):
             validate_profile_command(command)
         result = self._request("POST", "action", body=command, timeout=240, management_errors=True)
         if not isinstance(result, dict):
-            raise ControllerError("本地运行时返回了无法识别的数据。")
+            raise ControllerError(tr("本地运行时返回了无法识别的数据。"))
         validate_state(result.get("state"))
         return result
 
@@ -154,7 +155,7 @@ class PreviewManagement:
         return state
 
     def _file(self, identity):
-        return self._files.get(identity, {"name": "演示配置.yaml", "data": base64.b64encode(b"mixed-port: 7890\nmode: rule\n").decode(), "revision": "preview"})
+        return self._files.get(identity, {"name": tr("演示配置.yaml"), "data": base64.b64encode(b"mixed-port: 7890\nmode: rule\n").decode(), "revision": "preview"})
 
     @staticmethod
     def _decode_file(value):
@@ -166,7 +167,7 @@ class PreviewManagement:
                 raise ValueError
             data.decode("utf-8-sig")
         except (ValueError, TypeError, UnicodeDecodeError, binascii.Error):
-            raise ControllerError("配置文件编码无效。") from None
+            raise ControllerError(tr("配置文件编码无效。")) from None
         return value
 
     def _document(self, section, identity):
@@ -184,7 +185,7 @@ class PreviewManagement:
 
     def perform(self, command):
         if not isinstance(command, dict) or not isinstance(command.get("action"), str):
-            raise ControllerError("操作格式无效。")
+            raise ControllerError(tr("操作格式无效。"))
         action = command["action"]
         state = self._state
         if self._controller:
@@ -193,24 +194,24 @@ class PreviewManagement:
             return self._catalog.perform(command, state)
         if action.startswith("workspace."):
             if action not in ("workspace.read", "workspace.write"):
-                raise ControllerError("不支持的管理操作。")
+                raise ControllerError(tr("不支持的管理操作。"))
             section = command.get("section")
             if section not in WORKSPACE_SECTIONS:
-                raise ControllerError("不支持的分类。")
+                raise ControllerError(tr("不支持的分类。"))
             if section in PROFILE_SECTIONS and not any(item["id"] == command.get("id") for item in state["profiles"]):
-                raise ControllerError("请先选择配置。")
+                raise ControllerError(tr("请先选择配置。"))
             key = (section, command.get("id") if section in PROFILE_SECTIONS else None)
             document = self._document(section, command.get("id"))
             if action == "workspace.write":
                 if not document["writable"] or command.get("revision") != document["revision"]:
-                    raise ControllerError("内容只读或已修改，请重新载入。")
+                    raise ControllerError(tr("内容只读或已修改，请重新载入。"))
                 if document["format"] == "json":
                     try:
                         value = json.loads(command["text"])
                         if not isinstance(value, dict):
                             raise ValueError()
                     except (ValueError, KeyError, TypeError):
-                        raise ControllerError("请输入有效的 JSON 对象。") from None
+                        raise ControllerError(tr("请输入有效的 JSON 对象。")) from None
                 if section == "core":
                     network = {**state["network"], **{field: value[target]
                                for field, target in NETWORK_CONFIG_FIELDS.items() if target in value}}
@@ -225,15 +226,15 @@ class PreviewManagement:
             return {"state": self.snapshot(), "document": copy.deepcopy(document)}
         profile = next((item for item in state["profiles"] if item["id"] == command.get("id")), None)
         if action.startswith("profile.") and action not in ("profile.add", "profile.import", "profile.create") and profile is None:
-            raise ControllerError("配置已不存在，请刷新列表。")
+            raise ControllerError(tr("配置已不存在，请刷新列表。"))
         if action.startswith("profile."):
             validate_profile_command(command, profile)
         if action in ("profile.edit", "profile.delete") and command.get("revision") != profile.get("revision"):
-            raise ControllerError("配置已被更新，请刷新列表后重试。")
+            raise ControllerError(tr("配置已被更新，请刷新列表后重试。"))
         if action == "network.save":
             network = command.get("network")
             if command.get("expected") != self.snapshot()["network"]:
-                raise ControllerError("网络设置已修改，请重新载入。")
+                raise ControllerError(tr("网络设置已修改，请重新载入。"))
             validate_network(network)
             if self._controller:
                 baseline = self._controller.configuration()
@@ -243,11 +244,11 @@ class PreviewManagement:
             state["network"] = copy.deepcopy(network)
         elif action == "running.set":
             if type(command.get("running")) is not bool:
-                raise ControllerError("运行状态无效。")
+                raise ControllerError(tr("运行状态无效。"))
             state["running"] = command["running"]
         elif action in ("profile.add", "profile.import", "profile.create"):
             identity = str(uuid.uuid4())
-            profile = {"id": identity, "label": (command.get("label") or "演示配置").strip(),
+            profile = {"id": identity, "label": (command.get("label") or tr("演示配置")).strip(),
                        "url": command.get("url", ""),
                        "type": "custom" if action == "profile.create" else ("url" if action == "profile.add" else "file"),
                        "autoUpdate": command.get("autoUpdate", action == "profile.add"),
@@ -255,7 +256,7 @@ class PreviewManagement:
             state["profiles"].append(profile)
             if action == "profile.import":
                 data = self._decode_file(command.get("data"))
-                self._files[identity] = {"name": "演示配置.yaml", "data": data, "revision": hashlib.md5(base64.b64decode(data, validate=True)).hexdigest()}
+                self._files[identity] = {"name": tr("演示配置.yaml"), "data": data, "revision": hashlib.md5(base64.b64decode(data, validate=True)).hexdigest()}
         elif action == "profile.select":
             state["currentProfileID"] = profile["id"]
         elif action == "profile.delete":
@@ -272,13 +273,13 @@ class PreviewManagement:
             return {"state": self.snapshot(), "file": copy.deepcopy(self._file(profile["id"]))}
         elif action == "profile.write":
             if profile["type"] != "file" or self._file(profile["id"])["revision"] != command["revision"]:
-                raise ControllerError("文件只读或已被修改，请重新打开。")
+                raise ControllerError(tr("文件只读或已被修改，请重新打开。"))
             data = self._decode_file(command.get("data"))
-            self._files[profile["id"]] = {"name": "演示配置.yaml", "data": data, "revision": hashlib.md5(base64.b64decode(data, validate=True)).hexdigest()}
+            self._files[profile["id"]] = {"name": tr("演示配置.yaml"), "data": data, "revision": hashlib.md5(base64.b64decode(data, validate=True)).hexdigest()}
         elif action in ("proxy.select", "proxy.unfix", "tool.run"):
             if action == "tool.run" and command.get("tool") not in ("apply", "restart", "gc", "closeConnections", "updateProfiles", "updateResources", "updateProvider", "backupLocal", "testDAV", "backupDAV", "restoreLocalProfiles", "restoreLocalAll", "restoreDAVProfiles", "restoreDAVAll"):
-                raise ControllerError("不支持的工具操作。")
-            return {"state": self.snapshot(), "message": "演示操作已完成。"}
+                raise ControllerError(tr("不支持的工具操作。"))
+            return {"state": self.snapshot(), "message": tr("演示操作已完成。")}
         elif action != "profile.update":
-            raise ControllerError("不支持的管理操作。")
+            raise ControllerError(tr("不支持的管理操作。"))
         return {"state": self.snapshot()}

@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import time
 import unittest
+import tempfile
 import warnings
 from unittest.mock import patch
 
@@ -18,6 +19,8 @@ if SAFE_MODE:
     try:
         from zfly.app import Application, Window
         from zfly.tray import ITEM, MENU, WATCHER, WATCHER_PATH, StatusNotifierTray
+        from zfly.i18n import set_language
+        from zfly.icons import tray_icon_file
         from gi.repository import Adw, Gio, GLib, Gtk
         UI_AVAILABLE = True
     except (ImportError, ValueError):
@@ -40,6 +43,10 @@ class TrayTests(unittest.TestCase):
         cls.app.register(None)
 
     def setUp(self):
+        self.config_directory = tempfile.TemporaryDirectory(prefix="zfly-tray-config-")
+        self.environment = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config_directory.name, "LC_ALL": "zh_CN.UTF-8"})
+        self.environment.start()
+        set_language("zh-Hans")
         self.app.quitting = False
         self.app.start_hidden = False
         self.app.preview = True
@@ -58,6 +65,7 @@ class TrayTests(unittest.TestCase):
         self.reject_registration = False
 
     def tearDown(self):
+        set_language("zh-Hans")
         self.app.quitting = True
         if self.app.tray:
             self.app.tray.close()
@@ -70,6 +78,8 @@ class TrayTests(unittest.TestCase):
             window.destroy()
         self.app.window = None
         self.app.preview = True
+        self.environment.stop()
+        self.config_directory.cleanup()
         self.pump()
 
     def pump(self):
@@ -145,15 +155,22 @@ class TrayTests(unittest.TestCase):
                                GLib.Variant("(s)", (ITEM,)))[0]
         self.assertEqual(properties["Id"], "zfly")
         self.assertEqual(properties["Status"], "Active")
-        icon = Path(properties["IconName"])
-        self.assertTrue(icon.is_absolute())
+        self.assertEqual(properties["IconName"], "zfly-tray-running-symbolic")
+        self.assertTrue(properties["IconName"].endswith("-symbolic"))
+        self.assertEqual(properties["ToolTip"][0], properties["IconName"])
+        icon = tray_icon_file(True)
+        self.assertIsNotNone(icon)
         self.assertTrue(icon.is_file())
         self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
-        self.assertEqual(properties["ToolTip"][0], str(icon))
+        self.assertIsNotNone(tray_icon_file(False))
+        self.assertEqual(Path(properties["IconThemePath"]), icon.parent)
         self.assertEqual(properties["Menu"], tray.menu_path)
         width, height, pixels = properties["IconPixmap"][0]
         self.assertEqual(len(pixels), width * height * 4)
         self.assertEqual((width, height), (32, 32))
+        self.assertTrue(any(pixels[offset] for offset in range(0, len(pixels), 4)))
+        self.assertTrue(all(pixels[offset + 1] == pixels[offset + 2] == pixels[offset + 3]
+                            for offset in range(0, len(pixels), 4)))
         revision, layout = self.call(tray.menu_path, MENU, "GetLayout", GLib.Variant("(iias)", (0, -1, [])))
         self.assertGreater(revision, 0)
         self.assertEqual(layout[0], 0)
@@ -163,6 +180,19 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(groups, [(2, {"label": "打开 ZFly"}), (3, {"label": "停止代理"})])
         self.assertEqual(self.call(tray.menu_path, MENU, "GetProperty", GLib.Variant("(is)", (2, "label"))), ("打开 ZFly",))
         self.assertEqual(self.call(tray.menu_path, MENU, "AboutToShow", GLib.Variant("(i)", (0,))), (False,))
+
+    def test_menu_retranslates_without_restarting_or_changing_state(self):
+        tray = self.start_tray()
+        running = self.window.management_state["running"]
+        set_language("en")
+        self.app.update_tray()
+        self.assertEqual([entry.get("label") for entry in tray.entries.values() if "label" in entry],
+                         ["Offline preview · Proxy running", "Open ZFly", "Stop proxy", "Quit ZFly"])
+        self.assertEqual(self.window.management_state["running"], running)
+        set_language("zh-Hans")
+        self.app.update_tray()
+        self.assertEqual(tray.entries[2]["label"], "打开 ZFly")
+        self.assertEqual(tray.entries[3]["label"], "停止代理")
 
     def test_close_hides_and_activate_reopens_without_stopping_the_app(self):
         tray = self.start_tray()
@@ -178,14 +208,25 @@ class TrayTests(unittest.TestCase):
     def test_menu_opens_window_and_toggles_preview_proxy(self):
         tray = self.start_tray()
         self.window.close()
+        running_icon = tray.icon_name
+        running_pixmaps = tray.pixmaps
         self.click(2)
         self.wait(self.window.get_visible)
         self.click(3)
         self.wait(lambda: not self.window.busy and not self.window.management_state["running"])
         self.assertEqual(tray.entries[3]["label"], "启动代理")
+        self.assertEqual(running_icon, "zfly-tray-running-symbolic")
+        self.assertEqual(tray.icon_name, "zfly-tray-stopped-symbolic")
+        self.assertNotEqual(tray.pixmaps, running_pixmaps)
+        properties = self.call(tray.path, "org.freedesktop.DBus.Properties", "GetAll",
+                               GLib.Variant("(s)", (ITEM,)))[0]
+        self.assertEqual(properties["IconName"], "zfly-tray-stopped-symbolic")
+        self.assertEqual(properties["IconPixmap"], [(width, height, list(data)) for width, height, data in tray.pixmaps])
         self.click(3)
         self.wait(lambda: not self.window.busy and self.window.management_state["running"])
         self.assertEqual(tray.entries[3]["label"], "停止代理")
+        self.assertEqual(tray.icon_name, "zfly-tray-running-symbolic")
+        self.assertEqual(tray.pixmaps, running_pixmaps)
         self.assertIsNone(self.window.runtime)
 
     def test_quit_menu_uses_owned_runtime_cleanup_instead_of_hiding(self):

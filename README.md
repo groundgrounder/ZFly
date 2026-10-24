@@ -1,44 +1,46 @@
+**English** | [简体中文](README.zh-CN.md)
+
 # ZFly
 
-独立运行的原生代理客户端。ZFly 自己管理订阅、配置、代理核心、持久化设置和系统代理，不需要安装或运行 FlClash，也无需填写管理桥地址或控制器密钥。
+ZFly is a standalone native proxy client. It manages subscriptions, configurations, proxy cores, persistent settings, and the system proxy itself. FlClash does not need to be installed or running, and no management bridge address or controller secret is required.
 
-macOS 版仅支持 Apple Silicon（arm64），使用 SwiftUI 与系统材质，不提供 Intel 版本。Linux 使用 GTK 4 / libadwaita。代理协议由应用自带的 FlClash Go 核心或 mihomo 提供。
+The macOS app supports Apple Silicon (arm64) only, uses SwiftUI and system materials, and has no Intel build. Linux uses GTK 4 / libadwaita. Proxy protocols are provided by the app's bundled FlClash Go core or mihomo.
 
-<img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly 应用图标">
+<img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly app icon">
 
-## 使用
+## Usage
 
-1. 在 macOS 的“订阅”或 Linux 的“配置与订阅”中添加 Clash 格式订阅、导入 YAML，或创建自定义配置。
-2. 选择配置，点击“启动代理”。在代理页选择节点、固定自动组节点和测速。
-3. 按需开启“系统代理”，让遵循系统代理设置的应用使用 ZFly。默认混合端口为 `127.0.0.1:7890`。
-4. 停止代理或退出时，ZFly 恢复仍由自己持有的系统代理设置。
+1. In **Subscriptions** on macOS or **Profiles & Subscriptions** on Linux, add a Clash-format subscription, import YAML, or create a custom configuration.
+2. Select a configuration and click **Start Proxy**. On the proxy page, select nodes, pin nodes for automatic groups, and run latency tests.
+3. Enable **System Proxy** as needed so applications that follow system proxy settings use ZFly. The default mixed port is `127.0.0.1:7890`.
+4. When the proxy stops or ZFly quits, ZFly restores system proxy settings that it still owns.
 
-macOS 的 `--safe-mode` 启动隔离的演示运行时，使用临时数据目录和模拟核心，退出时删除数据；不启动真实核心、不访问外部网络、不修改系统代理。Linux 仍使用原有演示适配器。完整说明与功能范围见 [使用说明](docs/usage.md)。
+On macOS, `--safe-mode` starts an isolated demo runtime with a temporary data directory and a mock core. Data is deleted on exit; no real core starts, no external network is accessed, and the system proxy is not changed. Linux still uses the original demo adapter. See the [usage guide](docs/usage.md) for full details and feature scope.
 
-## 已实现与限制
+## Implemented Features and Limitations
 
-- 自动启动自己的私有本地服务和核心；macOS 完整包包含 Python、核心、地理数据和许可证。
-- 订阅下载、定时更新、ETag、用量和到期信息；本地 YAML 查看、编辑、导出；自定义节点与代理组。
-- 规则 / 全局 / 直连模式；Selector 选择、URLTest / Fallback 固定与恢复自动；可取消的节点和整组测速；连接查看与关闭。
-- macOS 仪表盘、流量趋势、菜单栏、主题和侧栏透明材质；中文与 English 界面。运行时消息仍有中文内容。
-- macOS 登录项、Linux 当前用户登录启动与隐藏窗口；GTK 系统托盘和后台运行。这些能力的本次平台验证范围见[验证记录](docs/audit-validation-2026-10-21.md)。
-- 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者和 Geo 资源更新、网络诊断。
-- 本地 JSON / HTTPS WebDAV 备份恢复；私有数据权限、原子保存、过期写入拒绝、配置失败回滚和系统代理恢复记录。
+- Automatically starts its own private local service and core; the full macOS app includes Python, the core, Geo data, and licenses.
+- Subscription downloads, scheduled updates, ETag, usage and expiration information; local YAML viewing, editing, and export; custom nodes and proxy groups.
+- Rule, Global, and Direct modes; Selector selection; pinning and restoring automatic selection for URLTest / Fallback; cancellable latency tests for individual nodes and entire groups; connection viewing and closing.
+- macOS dashboard, traffic trends, menu bar, themes, and transparent sidebar materials; Chinese and English on both macOS and GTK, although runtime messages may still contain Chinese.
+- macOS login items, Linux start at login for the current user and hidden-window startup; GTK system tray and background operation. See the [validation record](docs/audit-validation-2026-10-21.md) for the platforms covered by this round of validation.
+- Persistent core settings, DNS / hosts, configuration overrides, additional rules, provider and Geo resource updates, and network diagnostics.
+- Local JSON and HTTPS WebDAV backup and restore; private data permissions, atomic saves, rejection of expired writes, rollback after configuration failures, and system proxy restoration records.
 
-macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。旧版 macOS 与 aarch64 Linux 尚未完成本轮验证。
+The macOS TUN privilege helper, system DNS takeover, JavaScript scripting, global hotkeys, Wi-Fi policies, QR codes, and in-app self-updates are not implemented. Linux TUN requires additional core privileges; real network interception and system proxy restoration still require platform validation. Older macOS versions and aarch64 Linux have not completed this round of validation.
 
-## macOS 构建
+## Building on macOS
 
-在 Apple Silicon Mac 上构建，需要 Swift 6、macOS 26 或更新 SDK。最低部署目标为 macOS 14；旧系统兼容性仍需实机验证。
+Build on an Apple Silicon Mac with Swift 6 and the macOS 26 or newer SDK. The minimum deployment target is macOS 14; compatibility with older systems still needs testing on physical devices.
 
 ```sh
 sh macos/build-app.sh
 
-# 隔离演示运行时；直接启动二进制，与已运行的实例分开
+# Isolated demo runtime; launch the binary directly, separately from any running instance
 build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode
 ```
 
-直接从 SwiftPM 开发演示界面时，必须显式指定 Python 和共享运行时目录（这两个变量只在 `--safe-mode` 下读取）：
+When developing the demo UI directly through SwiftPM, explicitly specify the Python and shared runtime directories (these variables are read only in `--safe-mode`):
 
 ```sh
 cd macos
@@ -47,11 +49,11 @@ ZFLY_DEV_RUNTIME=/absolute/path/to/zfly/runtime \
 swift run ZFly --safe-mode
 ```
 
-演示操作经过真实 Service 的校验、版本检查、事务、回滚与临时持久化。模拟核心只做 YAML / schema 校验，不能检查真实核心的协议语义（例如未知代理类型），也不执行真实测速、DNS、WebDAV、Geo 或提供者下载；不提供 Age 解密。详见[演示模式差异](docs/usage.md#演示模式)。
+Demo operations pass through the real Service's validation, version checks, transactions, rollback, and temporary persistence. The mock core validates only YAML / schema and cannot check the real core's protocol semantics (such as unknown proxy types). It does not perform real latency tests, DNS, WebDAV, Geo or provider downloads, and provides no Age decryption. See [demo mode differences](docs/usage.md#演示模式).
 
-输出为 `build/macos/ZFly.app`。包使用本机临时签名，正式发布还需开发者签名与公证。
+The output is `build/macos/ZFly.app`. The app uses a local ad hoc signature; formal releases still require developer signing and notarization.
 
-打包需要可重定位的 CPython 3.12、独立核心、四个非空 Geo 数据文件和两份核心许可证：
+Packaging requires a relocatable CPython 3.12, a standalone core, four non-empty Geo data files, and both core licenses:
 
 ```sh
 ZFLY_PYTHON_HOME=/path/to/python-build-standalone \
@@ -63,29 +65,48 @@ ZFLY_MIHOMO_LICENSE=/path/to/mihomo-LICENSE \
 sh macos/build-app.sh
 ```
 
-Python 可放在 `build/dependencies/python`，脚本也查找本机 uv 的 CPython 3.12。核心默认查找 `build/dependencies/ZFlyCore` 或 `build/dependencies/mihomo`；标准 mihomo 指定 `ZFLY_CORE_KIND=mihomo`。构建不从已安装应用读取核心。
+Python can be placed in `build/dependencies/python`; the script also searches for CPython 3.12 installed by the local uv. The core defaults to `build/dependencies/ZFlyCore` or `build/dependencies/mihomo`; specify `ZFLY_CORE_KIND=mihomo` for standard mihomo. The build does not read a core from an installed app.
 
-Geo 默认依次查找 `FlClash/assets/data`、`build/flclash-host/assets/data`，需包含 `ASN.mmdb`、`GEOIP.dat`、`GEOIP.metadb`、`GEOSITE.dat`。许可证分别查找上述源码根目录的 `LICENSE` 和 `core/Clash.Meta/LICENSE`。环境变量可覆盖这些路径；资源缺失时构建失败。构建结束校验可执行文件、元数据、图标、预览、本地化、Geo、许可证与核心校验和。
+Geo data is searched in `FlClash/assets/data`, then `build/flclash-host/assets/data`, and must include `ASN.mmdb`, `GEOIP.dat`, `GEOIP.metadb`, and `GEOSITE.dat`. Licenses are read from `LICENSE` and `core/Clash.Meta/LICENSE` under those source roots, respectively. Environment variables can override these paths; the build fails if resources are missing. At the end, the build validates executables, metadata, icons, previews, localization, Geo data, licenses, and the core checksum.
 
 ## Linux / NixOS
 
+Run the following commands from the root of the source checkout:
+
 ```sh
+nix profile install .#
+nix run .#
+nix run .# -- --safe-mode
+
 nix build .#
 nix flake check
-nix run .# -- --safe-mode
 ```
 
-`flake.nix` 为 `x86_64-linux` 和 `aarch64-linux` 配置 GTK、Python、nixpkgs mihomo、桌面入口和图标，并在构建时运行测试。GNOME 系统代理由 gsettings 管理；其他桌面可手动设置本地代理。本次修改尚未在 Linux 上构建或验证，历史结果与当前缺口见[验证记录](docs/audit-validation-2026-10-21.md)。
+`flake.nix` configures GTK, Python, nixpkgs mihomo, desktop entries, and icons for `x86_64-linux` and `aarch64-linux`, and runs tests during the build. GNOME system proxy settings are managed through gsettings; other desktops can use manual local proxy settings. On 2026-10-24, the Nix build completed on x86_64 Linux, with 48 GTK UI tests and 12 tray tests also passing separately. Safe mode was used to validate Chinese and English, wide and narrow windows, and native back navigation. For gaps such as real proxy interception, see the [validation record](docs/audit-validation-2026-10-21.md).
 
-安装 GTK 4、libadwaita 和 PyGObject 后可从源码开发：
+With GTK 4, libadwaita, and PyGObject installed, you can also develop from source:
 
 ```sh
 PYTHONPATH=linux:runtime python3 -m zfly --safe-mode
-# 正常运行时需独立核心
+# A standalone core is required for normal operation
 PYTHONPATH=linux:runtime ZFLY_CORE=/path/to/mihomo ZFLY_CORE_KIND=mihomo python3 -m zfly
 ```
 
-## 验证
+### DEB and RPM Packages (x86_64)
+
+Locally built packages are placed in `build/packages`; the current packages target x86_64 only. Install them from that directory:
+
+```sh
+cd build/packages
+
+# Debian / Ubuntu
+sudo apt install ./zfly_0.2.0-1_amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
+```
+
+## Validation
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s runtime/tests -v
@@ -97,12 +118,12 @@ python3 tools/verify-preview.py --app build/macos/ZFly.app
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 
-集成脚本仅使用临时数据和回环端口，记录并清理自己的运行时与核心；不启用系统代理、TUN 或外部下载。GTK 图形交互验证方法见[使用说明](docs/usage.md#开发验证)。分阶段结果、测试对应关系和未验证部分见[审计修复验证](docs/audit-validation-2026-10-21.md)。
+The integration scripts use only temporary data and loopback ports, and record and clean up their own runtime and core. They do not enable the system proxy, TUN, or external downloads. See the [usage guide](docs/usage.md#开发验证) for GTK graphical interaction validation. For phased results, test coverage, and unvalidated areas, see the [audit remediation validation](docs/audit-validation-2026-10-21.md).
 
-## 源码与许可
+## Source and Licensing
 
-`macos/` 为 SwiftUI 应用，`linux/zfly/` 为 GTK 应用，`runtime/zfly_runtime/` 为共享独立运行时。两端预览数据的唯一来源为 `runtime/zfly_runtime/preview.json`。`assets/icon.svg` 为可编辑图标，通过 `python3 tools/render-icons.py` 生成。
+`macos/` contains the SwiftUI app, `linux/zfly/` contains the GTK app, and `runtime/zfly_runtime/` contains the shared standalone runtime. The sole source of preview data for both frontends is `runtime/zfly_runtime/preview.json`. `assets/icon.svg` is the editable icon source, rendered with `python3 tools/render-icons.py`.
 
-`FlClash/` 是可选的外部上游 checkout，当前工作区没有此目录；存在时须保留其历史和工作树。`build/flclash-host/` 是只读源码快照。历史管理桥补丁、基准和迁移脚本位于 [integrations/flclash](integrations/flclash/README.md)，当前应用不使用它们。
+`FlClash/` is an optional external upstream checkout and is not present in the current workspace; if present, its history and worktree must be preserved. `build/flclash-host/` is a read-only source snapshot. Legacy management bridge patches, benchmarks, and migration scripts are in [integrations/flclash](integrations/flclash/README.md) and are not used by the current app.
 
-ZFly 基于 FlClash / mihomo 相关工作继续开发，采用 [GPL-3.0](LICENSE)，保留原版权和许可。第三方 Python / PyYAML 及核心许可随 macOS 包分发。
+ZFly builds on work related to FlClash / mihomo and is licensed under [GPL-3.0](LICENSE), retaining the original copyright and license notices. Third-party Python / PyYAML and core licenses are distributed with the macOS app.

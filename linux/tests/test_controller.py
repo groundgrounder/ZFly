@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 
 from zfly.controller import Controller, ControllerError, PreviewController, validate_config
+from zfly.i18n import get_language, set_language
 
 
 class Response(io.BytesIO):
@@ -14,6 +15,13 @@ class Response(io.BytesIO):
 
 
 class ControllerTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_language = get_language()
+        set_language("zh-Hans")
+
+    def tearDown(self):
+        set_language(self.previous_language)
+
     def test_automatic_pin_preview_and_unfix_encoded_transport(self):
         preview = PreviewController()
         preview.select("自动选择", "新加坡")

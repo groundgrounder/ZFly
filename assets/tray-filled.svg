@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" role="img" aria-labelledby="title desc">
+  <title id="title">ZFly running</title>
+  <desc id="desc">A monochrome filled paper airplane, matching the running macOS menu bar symbol.</desc>
+  <path d="M22 2 15 22l-4-9-9-4Z" fill="#777777"/>
+  <path d="m22 2-11 11" fill="none" stroke="#777777" stroke-opacity=".45" stroke-width="1.1" stroke-linecap="round"/>
+</svg>

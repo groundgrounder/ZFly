@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" role="img" aria-labelledby="title desc">
+  <title id="title">ZFly stopped</title>
+  <desc id="desc">A monochrome outlined paper airplane, matching the stopped macOS menu bar symbol.</desc>
+  <g fill="none" stroke="#777777" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 2 15 22l-4-9-9-4Z"/>
+    <path d="m22 2-11 11"/>
+  </g>
+</svg>

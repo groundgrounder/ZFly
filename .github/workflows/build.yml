@@ -1,0 +1,92 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build the Nix package and run offline tests
+        run: nix build .#
+      - name: Run GTK interface tests
+        run: |
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          export XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data"
+          export XDG_CACHE_HOME="$tmp/cache" XDG_STATE_HOME="$tmp/state"
+          nix develop -c env PYTHONPATH=linux:runtime GDK_BACKEND=x11 \
+            xvfb-run -s "-screen 0 1600x1200x24" -a \
+            dbus-run-session -- python3 linux/tests/test_ui.py --safe-mode -v
+      - name: Run GTK tray tests
+        run: |
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          export XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data"
+          export XDG_CACHE_HOME="$tmp/cache" XDG_STATE_HOME="$tmp/state"
+          nix develop -c env PYTHONPATH=linux:runtime GDK_BACKEND=x11 \
+            xvfb-run -s "-screen 0 1600x1200x24" -a \
+            dbus-run-session -- python3 linux/tests/test_tray.py --safe-mode -v
+
+  distro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install the Debian package
+        run: |
+          mkdir -p build/packages
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/build:/out" \
+            debian:stable sh -c '
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev python3 &&
+              python3 /src/tools/build-distro-packages.py prepare \
+                --staging /out/staging &&
+              python3 /src/tools/build-distro-packages.py deb \
+                --staging /out/staging \
+                --output /out/packages/zfly_0.2.0-1_amd64.deb &&
+              apt-get install -y /out/packages/zfly_0.2.0-1_amd64.deb &&
+              zfly --help &&
+              /usr/lib/zfly/mihomo -v
+            '
+      - name: Build and install the Fedora package
+        run: |
+          mkdir -p build/packages
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/build:/out" \
+            fedora:latest sh -c '
+              dnf install -y rpm-build python3 &&
+              python3 /src/tools/build-distro-packages.py rpm \
+                --staging /out/staging \
+                --output /out/packages/zfly-0.2.0-1.x86_64.rpm &&
+              dnf install -y /out/packages/zfly-0.2.0-1.x86_64.rpm &&
+              zfly --help &&
+              /usr/lib/zfly/mihomo -v
+            '
+      - name: Generate checksums
+        run: sha256sum build/packages/*.deb build/packages/*.rpm > build/packages/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zfly-linux-packages
+          path: |
+            build/packages/*.deb
+            build/packages/*.rpm
+            build/packages/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

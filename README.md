@@ -106,6 +106,10 @@ sudo apt install ./zfly_0.2.0-1_amd64.deb
 sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
 ```
 
+## Continuous Integration
+
+The [GitHub Actions build workflow](.github/workflows/build.yml) runs on pushes and pull requests to `main`, and can also be started manually. It builds the Nix package, runs offline, GTK, and tray tests, builds and installs DEB/RPM packages, and uploads them with SHA-256 checksums for 14 days. macOS packaging is not part of CI because it requires additional core binaries and Geo data.
+
 ## Validation
 
 ```sh

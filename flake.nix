@@ -78,6 +78,20 @@
             };
           };
         });
+      devShells = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
+        in {
+          default = pkgs.mkShell {
+            packages = [ python pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme pkgs.glib pkgs.dbus pkgs.xvfb-run ];
+            nativeBuildInputs = [ pkgs.wrapGAppsHook4 pkgs.gobject-introspection ];
+            shellHook = ''
+              export XDG_DATA_DIRS=${pkgs.adwaita-icon-theme}/share:''${XDG_DATA_DIRS:-}
+              export PYTHONDONTWRITEBYTECODE=1
+            '';
+          };
+        });
       checks = forAllSystems (system: { package = self.packages.${system}.default; });
       apps = forAllSystems (system: {
         default = {

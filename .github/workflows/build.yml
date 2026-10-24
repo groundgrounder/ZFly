@@ -92,3 +92,65 @@ jobs:
             build/packages/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+      - uses: astral-sh/setup-uv@v5
+      - name: Download core source and Geo data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p build/core-source build/flclash-host build/packages
+          gh release download v0.2.0 \
+            -p ZFly-0.2.0-core-source.tar.gz \
+            -D build/dependencies --clobber
+          tar -xzf build/dependencies/ZFly-0.2.0-core-source.tar.gz \
+            -C build/core-source --strip-components=1
+          mkdir -p build/flclash-host/assets/data
+          for name in GEOIP.dat GEOSITE.dat GEOIP.metadb ASN.mmdb; do
+            curl -fL --retry 3 \
+              -H 'Accept: application/vnd.github.raw' \
+              "https://api.github.com/repos/chen08209/FlClash/contents/assets/data/$name?ref=8d4f9744948751f1273fe871e1d05276fac09b0e" \
+              -o "build/flclash-host/assets/data/$name"
+          done
+      - name: Install standalone Python
+        run: uv python install 3.12
+      - name: Build and test Swift packages
+        run: |
+          swift build --package-path macos
+          swift test --package-path macos
+      - name: Build the bundled core
+        run: sh build/core-source/build.sh
+      - name: Build and verify ZFly.app
+        env:
+          ZFLY_CORE: build/core-build/ZFlyCore
+          ZFLY_CORE_KIND: ipc
+          ZFLY_GEODATA: build/flclash-host/assets/data
+          ZFLY_CORE_LICENSE: build/core-source/LICENSE
+          ZFLY_MIHOMO_LICENSE: build/core-source/core/Clash.Meta/LICENSE
+        run: |
+          sh macos/build-app.sh
+          python3 tools/verify-preview.py --app build/macos/ZFly.app
+          python3 tools/verify-runtime.py --app build/macos/ZFly.app
+      - name: Create and verify the DMG
+        run: |
+          hdiutil create \
+            -volname ZFly \
+            -srcfolder build/macos/ZFly.app \
+            -ov -format UDZO \
+            build/packages/ZFly-0.2.0-macos-arm64.dmg
+          hdiutil verify build/packages/ZFly-0.2.0-macos-arm64.dmg
+          shasum -a 256 build/packages/ZFly-0.2.0-macos-arm64.dmg \
+            > build/packages/ZFly-0.2.0-macos-arm64.dmg.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zfly-macos-arm64
+          path: |
+            build/packages/ZFly-0.2.0-macos-arm64.dmg
+            build/packages/ZFly-0.2.0-macos-arm64.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

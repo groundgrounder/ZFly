@@ -108,7 +108,7 @@ sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
 
 ## 持续集成
 
-[GitHub Actions 构建工作流](.github/workflows/build.yml)在推送到 `main` 或向 `main` 提交 Pull Request 时运行，也可手动触发。工作流构建 Nix 包，运行离线、GTK 和托盘测试，构建并安装 DEB/RPM 包，并将包和 SHA-256 校验和保留 14 天。macOS 打包需要额外核心与 Geo 资源，目前不在 CI 中运行。
+[GitHub Actions 构建工作流](.github/workflows/build.yml)在推送到 `main` 或向 `main` 提交 Pull Request 时运行，也可手动触发。工作流构建 Nix 包，运行离线、GTK 和托盘测试，构建并安装 DEB/RPM 包，并将包和 SHA-256 校验和保留 14 天。独立的 macOS 任务在 macOS 26 上构建和测试应用、内置核心与 DMG，验证包内预览和运行时，并将 DMG 保留 14 天。CI 不执行正式签名和公证。
 
 ## 验证
 

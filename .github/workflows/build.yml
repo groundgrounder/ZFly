@@ -33,7 +33,7 @@ jobs:
           export XDG_CACHE_HOME="$tmp/cache" XDG_STATE_HOME="$tmp/state"
           nix develop -c env PYTHONPATH=linux:runtime GDK_BACKEND=x11 \
             xvfb-run -s "-screen 0 1600x1200x24" -a \
-            dbus-run-session -- python3 linux/tests/test_ui.py --safe-mode -v
+            /usr/bin/dbus-run-session -- python3 linux/tests/test_ui.py --safe-mode -v
       - name: Run GTK tray tests
         run: |
           tmp=$(mktemp -d)
@@ -42,7 +42,7 @@ jobs:
           export XDG_CACHE_HOME="$tmp/cache" XDG_STATE_HOME="$tmp/state"
           nix develop -c env PYTHONPATH=linux:runtime GDK_BACKEND=x11 \
             xvfb-run -s "-screen 0 1600x1200x24" -a \
-            dbus-run-session -- python3 linux/tests/test_tray.py --safe-mode -v
+            /usr/bin/dbus-run-session -- python3 linux/tests/test_tray.py --safe-mode -v
 
   distro:
     runs-on: ubuntu-latest

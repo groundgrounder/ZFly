@@ -2,9 +2,27 @@
 
 # ZFly
 
-ZFly is a standalone native proxy client for macOS and Linux. It manages subscriptions, configurations, its proxy core, persistent settings, and the system proxy. FlClash does not need to be installed or running, and no management bridge address or controller secret is required.
+ZFly is a native desktop engineering project for macOS and Linux, implemented as a standalone proxy client. The two frontends use their platform's native UI toolkit, while a shared Python runtime handles validation, persistent state, and the app-owned proxy core lifecycle. FlClash does not need to be installed or running.
 
 <img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly app icon">
+
+## Native Engineering Highlights
+
+```mermaid
+flowchart LR
+    M["macOS frontend<br/>Swift / SwiftUI"]
+    L["Linux frontend<br/>GTK 4 / libadwaita"]
+    R["Shared Python runtime<br/>Service · validation · state"]
+    C["App-owned proxy core<br/>FlClash Go / mihomo"]
+    M --> R
+    L --> R
+    R --> C
+```
+
+- **Native macOS integration:** SwiftUI system materials, a live traffic dashboard, menu-bar controls, login items, themes, and Dock / menu-bar window behavior.
+- **Native Linux integration:** adaptive narrow-window navigation, StatusNotifierItem tray support, XDG autostart, GNOME proxy integration, and desktop entries / icons.
+- **Shared runtime design:** a private authenticated local service, app-owned core lifecycle, atomic persistence, stale-write rejection, configuration rollback, and system proxy ownership tracking.
+- **Reproducible preview and delivery:** isolated safe-mode demos, Nix packaging, DMG / DEB / RPM builds, and platform-specific CI and validation.
 
 ## Download and Install
 
@@ -97,13 +115,11 @@ zfly --safe-mode
 
 The macOS demo uses an isolated temporary data directory and deletes it on exit. Demo results do not validate real proxy protocols, networking, DNS, WebDAV, or system integration.
 
-## Features and Limitations
+## Application Scope and Limits
 
-- Subscription downloads, scheduled updates, ETag, usage and expiration information; local YAML viewing, editing, and export; custom nodes and proxy groups.
-- Selector selection; pinning and restoring automatic selection for URLTest / Fallback; cancellable latency tests; connection viewing and closing.
-- Persistent core settings, DNS / hosts, configuration overrides, additional rules, provider and Geo resource updates, and network diagnostics.
-- Local JSON and HTTPS WebDAV backup and restore. Backups contain subscriptions and credentials and are not encrypted.
-- macOS dashboard, traffic trends, menu bar, login items, themes, and system materials; GTK system tray, background operation, and per-user autostart.
+- Profile and subscription management, local YAML editing and export, custom nodes and proxy groups, scheduled updates, and usage information.
+- Rule / Global / Direct modes, Selector selection, automatic-group pinning, latency tests, and connection management.
+- Core, DNS / hosts, rule and resource settings; network diagnostics; local JSON and HTTPS WebDAV backup and restore. Backups contain subscriptions and credentials and are not encrypted.
 - Chinese and English interfaces on both platforms; some runtime messages may still contain Chinese.
 
 The macOS TUN privilege helper, system DNS takeover, JavaScript scripting, global hotkeys, Wi-Fi policies, QR codes, and in-app self-updates are not implemented. Linux TUN requires additional core privileges; real network interception and system proxy restoration still require platform validation. See the [validation record](docs/audit-validation-2026-10-21.md) for covered platforms and remaining gaps.

@@ -2,9 +2,27 @@
 
 # ZFly
 
-ZFly 是适用于 macOS 和 Linux 的独立原生代理客户端，可自行管理订阅、配置、代理核心、持久化设置和系统代理。不需要安装或运行 FlClash，也无需填写管理桥地址或控制器密钥。
+ZFly 是一个面向 macOS 和 Linux 的原生桌面工程作品，以独立代理客户端作为完整应用场景。两个前端分别使用各平台的原生 UI 技术栈，共享 Python 运行时负责校验、持久化状态和代理核心生命周期；不需要安装或运行 FlClash。
 
 <img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly 应用图标">
+
+## 原生工程亮点
+
+```mermaid
+flowchart LR
+    M["macOS 前端<br/>Swift / SwiftUI"]
+    L["Linux 前端<br/>GTK 4 / libadwaita"]
+    R["共享 Python 运行时<br/>Service · 校验 · 状态"]
+    C["应用自有代理核心<br/>FlClash Go / mihomo"]
+    M --> R
+    L --> R
+    R --> C
+```
+
+- **macOS 原生集成**：SwiftUI 系统材质、实时流量仪表盘、菜单栏控制、登录项、主题，以及 Dock / 菜单栏窗口行为。
+- **Linux 原生集成**：窄窗自适应导航、StatusNotifierItem 托盘、XDG 自动启动、GNOME 代理集成，以及桌面入口和图标。
+- **共享运行时设计**：私有鉴权本地服务、应用自有核心生命周期、原子持久化、过期写入拒绝、配置回滚，以及系统代理所有权跟踪。
+- **可复现演示与交付**：隔离安全模式、Nix 打包、DMG / DEB / RPM 构建，以及分平台 CI 和验证。
 
 ## 下载与安装
 
@@ -97,13 +115,11 @@ zfly --safe-mode
 
 macOS 演示使用隔离的临时数据目录，并在退出时删除。演示结果不能用于验证真实代理协议、网络、DNS、WebDAV 或系统集成功能。
 
-## 功能与限制
+## 应用功能与限制
 
-- 订阅下载、定时更新、ETag、用量和到期信息；本地 YAML 查看、编辑与导出；自定义节点和代理组。
-- Selector 节点选择；URLTest / Fallback 固定与恢复自动选择；可取消的延迟测试；连接查看与关闭。
-- 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者和 Geo 资源更新，以及网络诊断。
-- 本地 JSON 与 HTTPS WebDAV 备份恢复。备份包含订阅和凭据，且未加密。
-- macOS 仪表盘、流量趋势、菜单栏、登录项、主题和系统材质；GTK 系统托盘、后台运行和当前用户自动启动。
+- 配置与订阅管理、本地 YAML 编辑和导出、自定义节点与代理组、定时更新及用量信息。
+- 规则 / 全局 / 直连模式、Selector 节点选择、自动组固定、延迟测试和连接管理。
+- 核心、DNS / hosts、规则与资源设置；网络诊断；本地 JSON 与 HTTPS WebDAV 备份恢复。备份包含订阅和凭据，且未加密。
 - macOS 与 GTK 均支持中文和 English，部分运行时消息仍可能包含中文。
 
 macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。已覆盖平台和剩余缺口见[验证记录](docs/audit-validation-2026-10-21.md)。

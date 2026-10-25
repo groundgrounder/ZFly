@@ -2,45 +2,128 @@
 
 # ZFly
 
-独立运行的原生代理客户端。ZFly 自己管理订阅、配置、代理核心、持久化设置和系统代理，不需要安装或运行 FlClash，也无需填写管理桥地址或控制器密钥。
-
-macOS 版仅支持 Apple Silicon（arm64），使用 SwiftUI 与系统材质，不提供 Intel 版本。Linux 使用 GTK 4 / libadwaita。代理协议由应用自带的 FlClash Go 核心或 mihomo 提供。
+ZFly 是适用于 macOS 和 Linux 的独立原生代理客户端，可自行管理订阅、配置、代理核心、持久化设置和系统代理。不需要安装或运行 FlClash，也无需填写管理桥地址或控制器密钥。
 
 <img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly 应用图标">
 
-## 使用
+## 下载与安装
 
-1. 在 macOS 的“订阅”或 Linux 的“配置与订阅”中添加 Clash 格式订阅、导入 YAML，或创建自定义配置。
-2. 选择配置，点击“启动代理”。在代理页选择节点、固定自动组节点和测速。
-3. 按需开启“系统代理”，让遵循系统代理设置的应用使用 ZFly。默认混合端口为 `127.0.0.1:7890`。
-4. 停止代理或退出时，ZFly 恢复仍由自己持有的系统代理设置。
+**[下载最新版本](https://github.com/groundgrounder/ZFly/releases/latest)**。Release 同时提供 `SHA256SUMS.txt` 校验文件。
 
-macOS 的 `--safe-mode` 启动隔离的演示运行时，使用临时数据目录和模拟核心，退出时删除数据；不启动真实核心、不访问外部网络、不修改系统代理。Linux 仍使用原有演示适配器。完整说明与功能范围见 [使用说明](docs/usage.md)。
+| 平台 | 支持的架构 | 软件包 |
+| --- | --- | --- |
+| macOS | 仅 Apple Silicon（arm64） | DMG |
+| Debian / Ubuntu、Fedora / RHEL | 仅 x86_64 | DEB / RPM |
+| Nix / NixOS | `x86_64-linux`、`aarch64-linux` | Flake |
 
-## 已实现与限制
+### macOS
 
-- 自动启动自己的私有本地服务和核心；macOS 完整包包含 Python、核心、地理数据和许可证。
-- 订阅下载、定时更新、ETag、用量和到期信息；本地 YAML 查看、编辑、导出；自定义节点与代理组。
-- 规则 / 全局 / 直连模式；Selector 选择、URLTest / Fallback 固定与恢复自动；可取消的节点和整组测速；连接查看与关闭。
-- macOS 仪表盘、流量趋势、菜单栏、主题和侧栏透明材质；macOS 与 GTK 均支持中文与 English，运行时消息仍可能包含中文。
-- macOS 登录项、Linux 当前用户登录启动与隐藏窗口；GTK 系统托盘和后台运行。这些能力的本次平台验证范围见[验证记录](docs/audit-validation-2026-10-21.md)。
-- 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者和 Geo 资源更新、网络诊断。
-- 本地 JSON / HTTPS WebDAV 备份恢复；私有数据权限、原子保存、过期写入拒绝、配置失败回滚和系统代理恢复记录。
+1. 从 [v0.2.0](https://github.com/groundgrounder/ZFly/releases/tag/v0.2.0) 下载 `ZFly-0.2.0-macos-arm64.dmg`，或从更新版本的 Release 下载对应 DMG。
+2. 打开 DMG，将 **ZFly.app** 拖入“应用程序”。
+3. 从“应用程序”启动 ZFly。
 
-macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。旧版 macOS 与 aarch64 Linux 尚未完成本轮验证。
+不提供 Intel 版本。最低部署目标为 macOS 14，但旧版 macOS 的兼容性仍需实机验证。当前 CI 构建未经 Developer ID 签名和公证。
 
-## macOS 构建
+### Debian / Ubuntu 与 Fedora / RHEL
 
-在 Apple Silicon Mac 上构建，需要 Swift 6、macOS 26 或更新 SDK。最低部署目标为 macOS 14；旧系统兼容性仍需实机验证。
+下载对应发行版的软件包，然后在下载目录执行：
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./zfly_0.2.0-1_amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
+```
+
+安装后可从应用启动器打开 ZFly，或运行 `zfly`。这些软件包目前仅支持 x86_64。
+
+### Nix / NixOS
+
+启用 Nix flakes 并配置 GitHub SSH 访问后，可以直接试用，也可以安装到当前用户的 profile：
+
+```sh
+# 直接运行
+nix run git+ssh://git@github.com/groundgrounder/ZFly.git
+
+# 为当前用户安装
+nix profile install git+ssh://git@github.com/groundgrounder/ZFly.git
+zfly
+```
+
+如需通过 NixOS 声明式安装，先将 ZFly 添加到 flake inputs：
+
+```nix
+{
+  inputs.zfly.url = "git+ssh://git@github.com/groundgrounder/ZFly.git";
+}
+```
+
+通过 `specialArgs = { inherit inputs; };` 将 `inputs` 传给 NixOS 模块，然后添加软件包：
+
+```nix
+{ inputs, pkgs, ... }:
+
+{
+  environment.systemPackages = [
+    inputs.zfly.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+执行 `sudo nixos-rebuild switch --flake .#myHost` 应用配置，并将 `myHost` 替换为你的配置名。flake 已包含 GTK、Python、mihomo、桌面入口和图标。aarch64 Linux 构建尚未完成本轮平台验证。
+
+## 快速上手
+
+1. 打开 macOS 的“订阅”或 Linux 的“配置与订阅”，添加 Clash / mihomo YAML 订阅链接、导入本地 YAML，或创建自定义配置。不支持把普通网页或任意格式的节点链接直接当作订阅。
+2. 选择配置并点击“启动代理”。ZFly 会自动启动自己的私有本地服务和核心。
+3. 选择“规则”“全局”或“直连”模式。在代理页选择节点、固定自动组节点，或进行延迟测试。
+4. 按需开启“系统代理”，让遵循系统代理设置的应用使用 ZFly。也可以为单个应用手动填写默认混合代理地址 `127.0.0.1:7890`。
+5. 需要完全停止时，从应用或托盘菜单退出 ZFly。应用会停止自己的核心，并且只恢复仍由自己持有的系统代理设置。Linux 在托盘可用时，关闭窗口可能只是隐藏窗口。
+
+GNOME 的系统代理由 gsettings 管理；其他 Linux 桌面可使用其支持的代理集成，或手动配置应用。订阅 User-Agent、自动启动、备份、数据位置、恢复和各平台行为详见[使用说明](docs/usage.md)。
+
+### 安全演示模式
+
+安全模式使用示例数据和模拟核心，不启动真实代理、不访问外部网络，也不修改系统代理设置。
+
+```sh
+# Linux 软件包或 Nix profile
+zfly --safe-mode
+
+# macOS，将 ZFly.app 复制到“应用程序”后
+/Applications/ZFly.app/Contents/MacOS/ZFly --safe-mode
+```
+
+macOS 演示使用隔离的临时数据目录，并在退出时删除。演示结果不能用于验证真实代理协议、网络、DNS、WebDAV 或系统集成功能。
+
+## 功能与限制
+
+- 订阅下载、定时更新、ETag、用量和到期信息；本地 YAML 查看、编辑与导出；自定义节点和代理组。
+- Selector 节点选择；URLTest / Fallback 固定与恢复自动选择；可取消的延迟测试；连接查看与关闭。
+- 持久化核心设置、DNS / hosts、配置覆盖、追加规则、提供者和 Geo 资源更新，以及网络诊断。
+- 本地 JSON 与 HTTPS WebDAV 备份恢复。备份包含订阅和凭据，且未加密。
+- macOS 仪表盘、流量趋势、菜单栏、登录项、主题和系统材质；GTK 系统托盘、后台运行和当前用户自动启动。
+- macOS 与 GTK 均支持中文和 English，部分运行时消息仍可能包含中文。
+
+macOS TUN 权限助手、系统 DNS 接管、JavaScript 脚本、全局热键、Wi-Fi 策略、二维码和应用自更新尚未实现。Linux TUN 需要额外核心权限，真实网络接管与系统代理恢复仍需平台验证。已覆盖平台和剩余缺口见[验证记录](docs/audit-validation-2026-10-21.md)。
+
+## 开发
+
+以下开发命令均在源码根目录执行。
+
+### macOS 构建
+
+在 Apple Silicon Mac 上构建，需要 Swift 6 和 macOS 26 或更新 SDK：
 
 ```sh
 sh macos/build-app.sh
-
-# 隔离演示运行时；直接启动二进制，与已运行的实例分开
 build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode
 ```
 
-直接从 SwiftPM 开发演示界面时，必须显式指定 Python 和共享运行时目录（这两个变量只在 `--safe-mode` 下读取）：
+输出为 `build/macos/ZFly.app`。包使用本机临时签名，正式发布仍需开发者签名与公证。
+
+直接从 SwiftPM 开发演示界面时，必须显式指定 Python 和共享运行时目录；这两个变量只在 `--safe-mode` 下读取：
 
 ```sh
 cd macos
@@ -49,9 +132,8 @@ ZFLY_DEV_RUNTIME=/absolute/path/to/zfly/runtime \
 swift run ZFly --safe-mode
 ```
 
-演示操作经过真实 Service 的校验、版本检查、事务、回滚与临时持久化。模拟核心只做 YAML / schema 校验，不能检查真实核心的协议语义（例如未知代理类型），也不执行真实测速、DNS、WebDAV、Geo 或提供者下载；不提供 Age 解密。详见[演示模式差异](docs/usage.md#演示模式)。
-
-输出为 `build/macos/ZFly.app`。包使用本机临时签名，正式发布还需开发者签名与公证。
+<details>
+<summary>macOS 完整包运行时要求</summary>
 
 打包需要可重定位的 CPython 3.12、独立核心、四个非空 Geo 数据文件和两份核心许可证：
 
@@ -65,52 +147,34 @@ ZFLY_MIHOMO_LICENSE=/path/to/mihomo-LICENSE \
 sh macos/build-app.sh
 ```
 
-Python 可放在 `build/dependencies/python`，脚本也查找本机 uv 的 CPython 3.12。核心默认查找 `build/dependencies/ZFlyCore` 或 `build/dependencies/mihomo`；标准 mihomo 指定 `ZFLY_CORE_KIND=mihomo`。构建不从已安装应用读取核心。
+Python 可放在 `build/dependencies/python`，脚本也会查找本机 uv 安装的 CPython 3.12。核心默认查找 `build/dependencies/ZFlyCore` 或 `build/dependencies/mihomo`；标准 mihomo 需指定 `ZFLY_CORE_KIND=mihomo`。构建不会从已安装应用读取核心。
 
-Geo 默认依次查找 `FlClash/assets/data`、`build/flclash-host/assets/data`，需包含 `ASN.mmdb`、`GEOIP.dat`、`GEOIP.metadb`、`GEOSITE.dat`。许可证分别查找上述源码根目录的 `LICENSE` 和 `core/Clash.Meta/LICENSE`。环境变量可覆盖这些路径；资源缺失时构建失败。构建结束校验可执行文件、元数据、图标、预览、本地化、Geo、许可证与核心校验和。
+Geo 默认依次查找 `FlClash/assets/data`、`build/flclash-host/assets/data`，需包含 `ASN.mmdb`、`GEOIP.dat`、`GEOIP.metadb` 和 `GEOSITE.dat`。许可证分别查找上述源码根目录的 `LICENSE` 和 `core/Clash.Meta/LICENSE`。环境变量可覆盖这些路径；资源缺失时构建失败。构建结束会校验可执行文件、元数据、图标、预览、本地化、Geo、许可证与核心校验和。
 
-## Linux / NixOS
+演示操作经过真实 Service 的校验、事务、回滚与临时持久化。模拟核心只做 YAML / schema 校验，不能验证真实协议语义。详见[演示模式差异](docs/usage.md#演示模式)。
 
-在源码目录根部执行以下命令：
+</details>
+
+### Linux 构建与源码运行
 
 ```sh
-nix profile install .#
-nix run .#
-nix run .# -- --safe-mode
-
 nix build .#
 nix flake check
+nix run .# -- --safe-mode
 ```
 
-`flake.nix` 为 `x86_64-linux` 和 `aarch64-linux` 配置 GTK、Python、nixpkgs mihomo、桌面入口和图标，并在构建时运行测试。GNOME 系统代理由 gsettings 管理；其他桌面可手动设置本地代理。2026-10-24 已在 x86_64 Linux 完成 Nix 构建，并单独通过 48 项 GTK 界面测试与 12 项托盘测试，用安全模式验证中英文、宽窗、窄窗和原生返回导航；真实代理接管等缺口见[验证记录](docs/audit-validation-2026-10-21.md)。
-
-安装 GTK 4、libadwaita 和 PyGObject 后可从源码开发：
+安装 GTK 4、libadwaita 和 PyGObject 后也可从源码运行。正常运行需要独立核心：
 
 ```sh
 PYTHONPATH=linux:runtime python3 -m zfly --safe-mode
-# 正常运行时需独立核心
 PYTHONPATH=linux:runtime ZFLY_CORE=/path/to/mihomo ZFLY_CORE_KIND=mihomo python3 -m zfly
 ```
 
-### DEB 与 RPM 包（x86_64）
+### 持续集成
 
-本地构建产物位于 `build/packages`，当前软件包仅支持 x86_64。在该目录中安装：
+[GitHub Actions 构建工作流](.github/workflows/build.yml)会构建 Nix 包，运行离线、GTK 和托盘测试，构建并安装 DEB/RPM 包，并将包和 SHA-256 校验和保留 14 天。独立的 macOS 任务在 macOS 26 上构建和测试应用、内置核心与 DMG，验证包内预览和运行时，并将 DMG 保留 14 天。CI 不执行正式签名和公证。
 
-```sh
-cd build/packages
-
-# Debian / Ubuntu
-sudo apt install ./zfly_0.2.0-1_amd64.deb
-
-# Fedora / RHEL
-sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
-```
-
-## 持续集成
-
-[GitHub Actions 构建工作流](.github/workflows/build.yml)在推送到 `main` 或向 `main` 提交 Pull Request 时运行，也可手动触发。工作流构建 Nix 包，运行离线、GTK 和托盘测试，构建并安装 DEB/RPM 包，并将包和 SHA-256 校验和保留 14 天。独立的 macOS 任务在 macOS 26 上构建和测试应用、内置核心与 DMG，验证包内预览和运行时，并将 DMG 保留 14 天。CI 不执行正式签名和公证。
-
-## 验证
+### 验证
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s runtime/tests -v
@@ -122,7 +186,7 @@ python3 tools/verify-preview.py --app build/macos/ZFly.app
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 
-集成脚本仅使用临时数据和回环端口，记录并清理自己的运行时与核心；不启用系统代理、TUN 或外部下载。GTK 图形交互验证方法见[使用说明](docs/usage.md#开发验证)。分阶段结果、测试对应关系和未验证部分见[审计修复验证](docs/audit-validation-2026-10-21.md)。
+集成脚本仅使用临时数据和回环端口，记录并清理自己的运行时与核心；不启用系统代理、TUN 或外部下载。GTK 图形交互验证方法见[使用说明](docs/usage.md#开发验证)。
 
 ## 源码与许可
 

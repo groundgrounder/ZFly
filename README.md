@@ -2,45 +2,128 @@
 
 # ZFly
 
-ZFly is a standalone native proxy client. It manages subscriptions, configurations, proxy cores, persistent settings, and the system proxy itself. FlClash does not need to be installed or running, and no management bridge address or controller secret is required.
-
-The macOS app supports Apple Silicon (arm64) only, uses SwiftUI and system materials, and has no Intel build. Linux uses GTK 4 / libadwaita. Proxy protocols are provided by the app's bundled FlClash Go core or mihomo.
+ZFly is a standalone native proxy client for macOS and Linux. It manages subscriptions, configurations, its proxy core, persistent settings, and the system proxy. FlClash does not need to be installed or running, and no management bridge address or controller secret is required.
 
 <img src="assets/icons/zfly-256.png" width="160" height="160" alt="ZFly app icon">
 
-## Usage
+## Download and Install
 
-1. In **Subscriptions** on macOS or **Profiles & Subscriptions** on Linux, add a Clash-format subscription, import YAML, or create a custom configuration.
-2. Select a configuration and click **Start Proxy**. On the proxy page, select nodes, pin nodes for automatic groups, and run latency tests.
-3. Enable **System Proxy** as needed so applications that follow system proxy settings use ZFly. The default mixed port is `127.0.0.1:7890`.
-4. When the proxy stops or ZFly quits, ZFly restores system proxy settings that it still owns.
+**[Download the latest release](https://github.com/groundgrounder/ZFly/releases/latest)**. SHA-256 checksums are published as `SHA256SUMS.txt`.
 
-On macOS, `--safe-mode` starts an isolated demo runtime with a temporary data directory and a mock core. Data is deleted on exit; no real core starts, no external network is accessed, and the system proxy is not changed. Linux still uses the original demo adapter. See the [usage guide](docs/usage.md) for full details and feature scope.
+| Platform | Supported architecture | Package |
+| --- | --- | --- |
+| macOS | Apple Silicon (arm64) only | DMG |
+| Debian / Ubuntu, Fedora / RHEL | x86_64 only | DEB / RPM |
+| Nix / NixOS | `x86_64-linux`, `aarch64-linux` | Flake |
 
-## Implemented Features and Limitations
+### macOS
 
-- Automatically starts its own private local service and core; the full macOS app includes Python, the core, Geo data, and licenses.
+1. Download `ZFly-0.2.0-macos-arm64.dmg` from [v0.2.0](https://github.com/groundgrounder/ZFly/releases/tag/v0.2.0), or the corresponding DMG from a newer release.
+2. Open the DMG and drag **ZFly.app** to **Applications**.
+3. Launch ZFly from Applications.
+
+There is no Intel build. The minimum deployment target is macOS 14, but compatibility with older macOS versions still needs physical-device validation. Current CI builds are not Developer ID signed or notarized.
+
+### Debian / Ubuntu and Fedora / RHEL
+
+Download the package for your distribution, then install it from your download directory:
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./zfly_0.2.0-1_amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
+```
+
+Start ZFly from the application launcher or run `zfly`. These packages currently support x86_64 only.
+
+### Nix / NixOS
+
+With Nix flakes enabled and GitHub SSH access configured, try ZFly without installing it or install it into your user profile:
+
+```sh
+# Run directly
+nix run git+ssh://git@github.com/groundgrounder/ZFly.git
+
+# Install for the current user
+nix profile install git+ssh://git@github.com/groundgrounder/ZFly.git
+zfly
+```
+
+For a declarative NixOS installation, add ZFly to your flake inputs:
+
+```nix
+{
+  inputs.zfly.url = "git+ssh://git@github.com/groundgrounder/ZFly.git";
+}
+```
+
+Pass `inputs` to the NixOS modules with `specialArgs = { inherit inputs; };`, then add the package:
+
+```nix
+{ inputs, pkgs, ... }:
+
+{
+  environment.systemPackages = [
+    inputs.zfly.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+Apply the configuration with `sudo nixos-rebuild switch --flake .#myHost`, replacing `myHost` with your configuration name. The flake provides GTK, Python, mihomo, desktop entries, and icons. The aarch64 Linux build has not completed the current round of platform validation.
+
+## Quick Start
+
+1. Open **Subscriptions** on macOS or **Profiles & Subscriptions** on Linux. Add a Clash / mihomo YAML subscription URL, import a local YAML file, or create a custom configuration. Plain web pages and arbitrary node-link formats are not supported as subscriptions.
+2. Select a configuration and click **Start Proxy**. ZFly starts its own private local service and core automatically.
+3. Choose **Rule**, **Global**, or **Direct** mode. On the proxy page, select nodes, pin nodes for automatic groups, and run latency tests.
+4. Enable **System Proxy** so applications that follow system proxy settings use ZFly. Alternatively, configure an application manually with the default mixed proxy address `127.0.0.1:7890`.
+5. To stop completely, quit ZFly from the app or tray menu. It stops its core and restores only system proxy settings that it still owns. On Linux, closing the window may only hide it when a tray is available.
+
+GNOME system proxy settings are managed through gsettings. On other Linux desktops, use the desktop's supported proxy integration or configure applications manually. See the [usage guide](docs/usage.md) for subscription User-Agent settings, autostart, backups, data locations, recovery, and platform-specific behavior.
+
+### Safe Demo Mode
+
+Safe mode uses example data and a simulated core; it does not start a real proxy, access external networks, or change system proxy settings.
+
+```sh
+# Linux package or Nix profile
+zfly --safe-mode
+
+# macOS, after copying ZFly.app to Applications
+/Applications/ZFly.app/Contents/MacOS/ZFly --safe-mode
+```
+
+The macOS demo uses an isolated temporary data directory and deletes it on exit. Demo results do not validate real proxy protocols, networking, DNS, WebDAV, or system integration.
+
+## Features and Limitations
+
 - Subscription downloads, scheduled updates, ETag, usage and expiration information; local YAML viewing, editing, and export; custom nodes and proxy groups.
-- Rule, Global, and Direct modes; Selector selection; pinning and restoring automatic selection for URLTest / Fallback; cancellable latency tests for individual nodes and entire groups; connection viewing and closing.
-- macOS dashboard, traffic trends, menu bar, themes, and transparent sidebar materials; Chinese and English on both macOS and GTK, although runtime messages may still contain Chinese.
-- macOS login items, Linux start at login for the current user and hidden-window startup; GTK system tray and background operation. See the [validation record](docs/audit-validation-2026-10-21.md) for the platforms covered by this round of validation.
+- Selector selection; pinning and restoring automatic selection for URLTest / Fallback; cancellable latency tests; connection viewing and closing.
 - Persistent core settings, DNS / hosts, configuration overrides, additional rules, provider and Geo resource updates, and network diagnostics.
-- Local JSON and HTTPS WebDAV backup and restore; private data permissions, atomic saves, rejection of expired writes, rollback after configuration failures, and system proxy restoration records.
+- Local JSON and HTTPS WebDAV backup and restore. Backups contain subscriptions and credentials and are not encrypted.
+- macOS dashboard, traffic trends, menu bar, login items, themes, and system materials; GTK system tray, background operation, and per-user autostart.
+- Chinese and English interfaces on both platforms; some runtime messages may still contain Chinese.
 
-The macOS TUN privilege helper, system DNS takeover, JavaScript scripting, global hotkeys, Wi-Fi policies, QR codes, and in-app self-updates are not implemented. Linux TUN requires additional core privileges; real network interception and system proxy restoration still require platform validation. Older macOS versions and aarch64 Linux have not completed this round of validation.
+The macOS TUN privilege helper, system DNS takeover, JavaScript scripting, global hotkeys, Wi-Fi policies, QR codes, and in-app self-updates are not implemented. Linux TUN requires additional core privileges; real network interception and system proxy restoration still require platform validation. See the [validation record](docs/audit-validation-2026-10-21.md) for covered platforms and remaining gaps.
 
-## Building on macOS
+## Development
 
-Build on an Apple Silicon Mac with Swift 6 and the macOS 26 or newer SDK. The minimum deployment target is macOS 14; compatibility with older systems still needs testing on physical devices.
+Run development commands from the root of the source checkout.
+
+### macOS Build
+
+Build on an Apple Silicon Mac with Swift 6 and the macOS 26 or newer SDK:
 
 ```sh
 sh macos/build-app.sh
-
-# Isolated demo runtime; launch the binary directly, separately from any running instance
 build/macos/ZFly.app/Contents/MacOS/ZFly --safe-mode
 ```
 
-When developing the demo UI directly through SwiftPM, explicitly specify the Python and shared runtime directories (these variables are read only in `--safe-mode`):
+The output is `build/macos/ZFly.app`. It uses a local ad hoc signature; formal releases still require developer signing and notarization.
+
+When developing the demo UI directly through SwiftPM, explicitly specify the Python and shared runtime directories. These variables are read only in `--safe-mode`:
 
 ```sh
 cd macos
@@ -49,9 +132,8 @@ ZFLY_DEV_RUNTIME=/absolute/path/to/zfly/runtime \
 swift run ZFly --safe-mode
 ```
 
-Demo operations pass through the real Service's validation, version checks, transactions, rollback, and temporary persistence. The mock core validates only YAML / schema and cannot check the real core's protocol semantics (such as unknown proxy types). It does not perform real latency tests, DNS, WebDAV, Geo or provider downloads, and provides no Age decryption. See [demo mode differences](docs/usage.md#演示模式).
-
-The output is `build/macos/ZFly.app`. The app uses a local ad hoc signature; formal releases still require developer signing and notarization.
+<details>
+<summary>macOS packaged-runtime requirements</summary>
 
 Packaging requires a relocatable CPython 3.12, a standalone core, four non-empty Geo data files, and both core licenses:
 
@@ -69,48 +151,30 @@ Python can be placed in `build/dependencies/python`; the script also searches fo
 
 Geo data is searched in `FlClash/assets/data`, then `build/flclash-host/assets/data`, and must include `ASN.mmdb`, `GEOIP.dat`, `GEOIP.metadb`, and `GEOSITE.dat`. Licenses are read from `LICENSE` and `core/Clash.Meta/LICENSE` under those source roots, respectively. Environment variables can override these paths; the build fails if resources are missing. At the end, the build validates executables, metadata, icons, previews, localization, Geo data, licenses, and the core checksum.
 
-## Linux / NixOS
+The demo passes operations through the real Service's validation, transactions, rollback, and temporary persistence. Its mock core validates only YAML / schema and cannot validate real protocol semantics. See [demo mode differences](docs/usage.md#演示模式).
 
-Run the following commands from the root of the source checkout:
+</details>
+
+### Linux Build and Source Runs
 
 ```sh
-nix profile install .#
-nix run .#
-nix run .# -- --safe-mode
-
 nix build .#
 nix flake check
+nix run .# -- --safe-mode
 ```
 
-`flake.nix` configures GTK, Python, nixpkgs mihomo, desktop entries, and icons for `x86_64-linux` and `aarch64-linux`, and runs tests during the build. GNOME system proxy settings are managed through gsettings; other desktops can use manual local proxy settings. On 2026-10-24, the Nix build completed on x86_64 Linux, with 48 GTK UI tests and 12 tray tests also passing separately. Safe mode was used to validate Chinese and English, wide and narrow windows, and native back navigation. For gaps such as real proxy interception, see the [validation record](docs/audit-validation-2026-10-21.md).
-
-With GTK 4, libadwaita, and PyGObject installed, you can also develop from source:
+With GTK 4, libadwaita, and PyGObject installed, you can also run from source. Normal operation requires a standalone core:
 
 ```sh
 PYTHONPATH=linux:runtime python3 -m zfly --safe-mode
-# A standalone core is required for normal operation
 PYTHONPATH=linux:runtime ZFLY_CORE=/path/to/mihomo ZFLY_CORE_KIND=mihomo python3 -m zfly
 ```
 
-### DEB and RPM Packages (x86_64)
+### Continuous Integration
 
-Locally built packages are placed in `build/packages`; the current packages target x86_64 only. Install them from that directory:
+The [GitHub Actions build workflow](.github/workflows/build.yml) builds the Nix package, runs offline, GTK, and tray tests, builds and installs DEB/RPM packages, and uploads them with SHA-256 checksums for 14 days. A separate macOS job builds and tests the app, bundled core, and DMG on macOS 26, verifies the packaged preview and runtime, and uploads the DMG for 14 days. CI does not perform formal signing or notarization.
 
-```sh
-cd build/packages
-
-# Debian / Ubuntu
-sudo apt install ./zfly_0.2.0-1_amd64.deb
-
-# Fedora / RHEL
-sudo dnf install ./zfly-0.2.0-1.x86_64.rpm
-```
-
-## Continuous Integration
-
-The [GitHub Actions build workflow](.github/workflows/build.yml) runs on pushes and pull requests to `main`, and can also be started manually. It builds the Nix package, runs offline, GTK, and tray tests, builds and installs DEB/RPM packages, and uploads them with SHA-256 checksums for 14 days. A separate macOS job builds and tests the app, bundled core, and DMG on macOS 26, verifies the packaged preview and runtime, and uploads the DMG for 14 days. Signing and notarization are not performed.
-
-## Validation
+### Validation
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=runtime python3 -m unittest discover -s runtime/tests -v
@@ -122,7 +186,7 @@ python3 tools/verify-preview.py --app build/macos/ZFly.app
 python3 tools/verify-runtime.py --app build/macos/ZFly.app
 ```
 
-The integration scripts use only temporary data and loopback ports, and record and clean up their own runtime and core. They do not enable the system proxy, TUN, or external downloads. See the [usage guide](docs/usage.md#开发验证) for GTK graphical interaction validation. For phased results, test coverage, and unvalidated areas, see the [audit remediation validation](docs/audit-validation-2026-10-21.md).
+The integration scripts use only temporary data and loopback ports, and record and clean up their own runtime and core. They do not enable the system proxy, TUN, or external downloads. See the [usage guide](docs/usage.md#开发验证) for GTK graphical interaction validation.
 
 ## Source and Licensing
 
